@@ -1,0 +1,23 @@
+{
+    "watch": [
+        "src"
+    ],
+    "ext": "ts,json",
+    "ignore": [
+        "src/**/*.spec.ts",
+        "src/**/*.test.ts"
+    ],
+    "exec": "ts-node -r tsconfig-paths/register src/server.ts",
+    "env": {
+        "NODE_ENV": "development"
+    },
+    "delay": "1000",
+    "restartable": "rs",
+    "verbose": true,
+    "events": {
+        "restart": "echo '\\n🔄 Application restarted due to file changes\\n'",
+        "start": "echo '\\n🚀 Starting application...\\n'",
+        "crash": "echo '\\n💥 Application crashed!\\n'",
+        "exit": "echo '\\n👋 Application exited\\n'"
+    }
+}

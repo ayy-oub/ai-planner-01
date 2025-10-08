@@ -1,0 +1,26 @@
+FROM node:20-alpine
+
+# Install testing dependencies
+RUN apk add --no-cache \
+    python3 \
+    make \
+    g++ \
+    git
+
+# Set working directory
+WORKDIR /app
+
+# Copy package files
+COPY package*.json ./
+
+# Install all dependencies (including dev dependencies)
+RUN npm ci --quiet
+
+# Copy source code and tests
+COPY . .
+
+# Build the application
+RUN npm run build
+
+# Default command for testing
+CMD ["npm", "run", "test"]

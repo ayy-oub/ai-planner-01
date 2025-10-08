@@ -1,0 +1,75 @@
+{
+    "compilerOptions": {
+    /* Language and Environment */
+    "target": "ES2022",
+    "lib": ["ES2022"],
+    "module": "Node16",
+    "moduleResolution": "node16",
+    "esModuleInterop": true,
+    "allowSyntheticDefaultImports": true,
+
+    /* Strict Type-Checking */
+    "strict": true,
+    "noImplicitAny": true,
+    "strictNullChecks": true,
+    "strictFunctionTypes": true,
+    "strictBindCallApply": true,
+    "strictPropertyInitialization": true,
+    "noImplicitThis": true,
+    "alwaysStrict": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "noImplicitReturns": true,
+    "noFallthroughCasesInSwitch": true,
+    "noUncheckedIndexedAccess": true,
+
+    /* Module Resolution */
+    "baseUrl": ".",
+    "paths": {
+        "@/*": ["src/*"],
+        "@modules/*": ["src/modules/*"],
+        "@shared/*": ["src/shared/*"],
+        "@infrastructure/*": ["src/infrastructure/*"],
+        "@config": ["src/shared/config"],
+        "@utils/*": ["src/shared/utils/*"],
+        "@types/*": ["src/shared/types/*"],
+        "@middleware/*": ["src/shared/middleware/*"],
+        "@services/*": ["src/shared/services/*"],
+        "@repositories/*": ["src/shared/repository/*"]
+    },
+    "ignoreDeprecations": "6.0",
+    "resolveJsonModule": true,
+    "allowJs": false,
+
+    /* Emit */
+    "declaration": true,
+    "declarationMap": true,
+    "sourceMap": true,
+    "outDir": "./dist",
+    "rootDir": "./src",
+    "removeComments": true,
+    "importHelpers": true,
+
+    /* Interop Constraints */
+    "forceConsistentCasingInFileNames": true,
+    "skipLibCheck": true,
+
+    /* Advanced */
+    "experimentalDecorators": true,
+    "emitDecoratorMetadata": true,
+    "resolvePackageJsonExports": true,
+    "resolvePackageJsonImports": true,
+    "isolatedModules": true,
+    "verbatimModuleSyntax": true,
+
+    /* Debugging */
+    "preserveConstEnums": true,
+    "noEmitOnError": true
+    },
+    "include": ["src/**/*", "tests/**/*", "docs/**/*"],
+    "exclude": ["node_modules", "dist", "coverage", ".nyc_output", "logs", "*.log"],
+    "ts-node": {
+        "esm": true,
+        "experimentalSpecifierResolution": "node"
+    }
+}
