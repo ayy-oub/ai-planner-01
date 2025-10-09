@@ -1,10 +1,14 @@
 import nodemailer, { Transporter, SendMailOptions } from 'nodemailer';
 import { config } from '../config';
 import { logger } from '../utils/logger';
-import { AppError, EmailError } from '../utils/errors';
+import { EmailError } from '../utils/errors';
 import { readFileSync } from 'fs';
 import { join } from 'path';
 import handlebars from 'handlebars';
+import SMTPTransport from 'nodemailer/lib/smtp-transport';
+import { randomUUID } from 'crypto';
+import { readdirSync } from 'fs';
+import { TextEncoding } from 'nodemailer/lib/mailer';
 
 /**
  * Email template data
@@ -121,13 +125,15 @@ export interface EmailQueueItem {
  * Email service
  */
 export class EmailService {
-  private transporter: Transporter;
+  private transporter!: Transporter;
   private templates = new Map<string, handlebars.TemplateDelegate>();
   private templateCache = new Map<string, EmailTemplate>();
   private queue: EmailQueueItem[] = [];
   private isProcessing = false;
+  private readonly config: EmailServiceConfig;
 
-  constructor(private config: EmailServiceConfig) {
+  constructor() {
+    this.config = config.email;
     this.initializeTransporter();
     this.initializeTemplates();
     this.registerHelpers();
@@ -138,43 +144,13 @@ export class EmailService {
    */
   private initializeTransporter(): void {
     try {
-      switch (this.config.transport) {
-        case 'smtp':
-          this.transporter = nodemailer.createTransport({
-            host: this.config.smtp?.host,
-            port: this.config.smtp?.port,
-            secure: this.config.smtp?.secure,
-            auth: this.config.smtp?.auth,
-            pool: this.config.smtp?.pool,
-            maxConnections: this.config.smtp?.maxConnections,
-            maxMessages: this.config.smtp?.maxMessages,
-            rateDelta: this.config.smtp?.rateDelta,
-            rateLimit: this.config.smtp?.rateLimit,
-          });
-          break;
+      const transportOptions: SMTPTransport.Options = this.config.smtp!;
 
-        case 'sendmail':
-          this.transporter = nodemailer.createTransport({
-            sendmail: true,
-            newline: 'unix',
-            path: '/usr/sbin/sendmail',
-          });
-          break;
 
-        default:
-          throw new Error(`Unsupported transport: ${this.config.transport}`);
-      }
+      // Initialize transporter with SMTP transport
+      this.transporter = nodemailer.createTransport(transportOptions);
 
-      // Verify transporter configuration
-      this.transporter.verify((error, success) => {
-        if (error) {
-          logger.error('Email transporter verification failed', { error: error.message });
-        } else {
-          logger.info('Email transporter is ready');
-        }
-      });
-
-    } catch (error) {
+    } catch (error: any) {
       logger.error('Failed to initialize email transporter', { error: error.message });
       throw new EmailError(`Failed to initialize email transporter: ${error.message}`);
     }
@@ -191,14 +167,14 @@ export class EmailService {
     try {
       // Load built-in templates
       this.loadBuiltinTemplates();
-      
+
       // Load custom templates if path provided
       if (this.config.templates.path) {
         this.loadCustomTemplates(this.config.templates.path);
       }
 
       logger.info('Email templates initialized', { count: this.templates.size });
-    } catch (error) {
+    } catch (error: any) {
       logger.error('Failed to initialize email templates', { error: error.message });
       throw new EmailError(`Failed to initialize email templates: ${error.message}`);
     }
@@ -477,8 +453,8 @@ export class EmailService {
    */
   private loadCustomTemplates(templatesPath: string): void {
     try {
-      const templateFiles = require('fs').readdirSync(templatesPath);
-      
+      const templateFiles = readdirSync(templatesPath);
+
       for (const file of templateFiles) {
         if (file.endsWith('.hbs')) {
           const templateName = file.replace('.hbs', '');
@@ -487,9 +463,9 @@ export class EmailService {
           this.templates.set(templateName, template);
         }
       }
-      
+
       logger.info('Custom templates loaded', { count: templateFiles.length });
-    } catch (error) {
+    } catch (error: any) {
       logger.error('Failed to load custom templates', { error: error.message });
     }
   }
@@ -525,19 +501,19 @@ export class EmailService {
   registerTemplate(name: string, template: EmailTemplate): void {
     try {
       this.templateCache.set(name, template);
-      
+
       if (template.html) {
         const compiledHtml = handlebars.compile(template.html);
         this.templates.set(`${name}:html`, compiledHtml);
       }
-      
+
       if (template.text) {
         const compiledText = handlebars.compile(template.text);
         this.templates.set(`${name}:text`, compiledText);
       }
-      
+
       logger.debug('Template registered', { name });
-    } catch (error) {
+    } catch (error: any) {
       logger.error('Failed to register template', { error: error.message, name });
       throw new EmailError(`Failed to register template: ${error.message}`);
     }
@@ -553,7 +529,7 @@ export class EmailService {
 
       // Prepare email content
       const emailContent = await this.prepareEmailContent(options);
-      
+
       // Create mail options
       const mailOptions: SendMailOptions = {
         from: options.from || `"${this.config.from.name}" <${this.config.from.email}>`,
@@ -572,7 +548,7 @@ export class EmailService {
         messageId: options.messageId,
         date: options.date,
         encoding: options.encoding,
-        textEncoding: options.textEncoding,
+        textEncoding: options.textEncoding as TextEncoding | undefined,
       };
 
       logger.info('Sending email', {
@@ -583,7 +559,7 @@ export class EmailService {
 
       // Send email
       const result = await this.transporter.sendMail(mailOptions);
-      
+
       logger.info('Email sent successfully', {
         messageId: result.messageId,
         to: options.to,
@@ -599,13 +575,13 @@ export class EmailService {
         envelope: result.envelope,
       };
 
-    } catch (error) {
+    } catch (error: any) {
       logger.error('Failed to send email', {
         error: error.message,
         to: options.to,
         subject: options.subject,
       });
-      
+
       throw new EmailError(`Failed to send email: ${error.message}`);
     }
   }
@@ -628,7 +604,7 @@ export class EmailService {
 
     // Validate email addresses
     const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-    
+
     const validateEmail = (email: string) => {
       if (!emailRegex.test(email)) {
         throw new EmailError(`Invalid email address: ${email}`);
@@ -686,14 +662,14 @@ export class EmailService {
     text?: string;
   } {
     const template = this.templateCache.get(templateName);
-    
+
     if (!template) {
       throw new EmailError(`Template not found: ${templateName}`);
     }
 
     try {
       const subject = handlebars.compile(template.subject)(data);
-      
+
       let html: string | undefined;
       let text: string | undefined;
 
@@ -708,7 +684,7 @@ export class EmailService {
       }
 
       return { subject, html, text };
-    } catch (error) {
+    } catch (error: any) {
       logger.error('Template rendering failed', { error: error.message, templateName });
       throw new EmailError(`Template rendering failed: ${error.message}`);
     }
@@ -721,13 +697,19 @@ export class EmailService {
     templateName: string,
     to: string | string[],
     templateData: EmailTemplateData,
-    options: Partial<EmailOptions> = {}
+    options: Partial<EmailOptions> = {},
   ): Promise<EmailResult> {
+    // template always provides the subject
+    const { subject, html, text } = this.renderTemplate(templateName, templateData);
+
     return this.sendEmail({
-      ...options,
+      ...options,          // extras (cc, bcc, attachments …)
       to,
+      subject,             // guaranteed to exist
       template: templateName,
       templateData,
+      html: html ?? options.html,
+      text: text ?? options.text,
     });
   }
 
@@ -856,8 +838,8 @@ export class EmailService {
    * Queue email for later sending
    */
   queueEmail(options: EmailOptions, priority: number = 0): string {
-    const id = require('crypto').randomUUID();
-    
+    const id = randomUUID();
+
     const queueItem: EmailQueueItem = {
       id,
       options,
@@ -896,32 +878,32 @@ export class EmailService {
 
     while (this.queue.length > 0) {
       const item = this.queue.shift()!;
-      
+
       try {
         await this.sendEmail(item.options);
         item.sentAt = new Date();
         logger.info('Queued email sent successfully', { id: item.id });
-      } catch (error) {
+      } catch (error: any) {
         item.attempts++;
         item.error = error.message;
-        
+
         if (item.attempts < item.maxAttempts) {
           // Re-queue for retry with exponential backoff
           const delay = Math.pow(2, item.attempts) * 1000; // 2s, 4s, 8s
-          
+
           setTimeout(() => {
             this.queue.push(item);
-            logger.warn('Email re-queued for retry', { 
-              id: item.id, 
+            logger.warn('Email re-queued for retry', {
+              id: item.id,
               attempts: item.attempts,
-              nextRetryIn: delay 
+              nextRetryIn: delay
             });
           }, delay);
         } else {
-          logger.error('Email failed after max attempts', { 
-            id: item.id, 
+          logger.error('Email failed after max attempts', {
+            id: item.id,
             attempts: item.attempts,
-            error: error.message 
+            error: error.message
           });
         }
       }
@@ -963,7 +945,7 @@ export class EmailService {
     extraOptions: Partial<EmailOptions> = {}
   ): Promise<EmailResult[]> {
     const results: EmailResult[] = [];
-    
+
     for (const recipient of recipients) {
       try {
         const result = await this.sendTemplate(
@@ -973,13 +955,13 @@ export class EmailService {
           extraOptions
         );
         results.push(result);
-      } catch (error) {
+      } catch (error: any) {
         logger.error('Bulk email failed for recipient', {
           error: error.message,
           to: recipient.to,
           template: templateName,
         });
-        
+
         results.push({
           messageId: '',
           accepted: [],
@@ -990,7 +972,7 @@ export class EmailService {
         });
       }
     }
-    
+
     return results;
   }
 
@@ -1010,8 +992,8 @@ export class EmailService {
     templateData: EmailTemplateData;
     send: () => Promise<EmailResult[]>;
   } {
-    const campaignId = require('crypto').randomUUID();
-    
+    const campaignId = randomUUID();
+
     return {
       name,
       id: campaignId,
@@ -1019,23 +1001,23 @@ export class EmailService {
       templateName,
       templateData,
       send: async () => {
-        logger.info('Starting email campaign', { 
-          campaignId, 
-          name, 
-          recipients: recipients.length 
+        logger.info('Starting email campaign', {
+          campaignId,
+          name,
+          recipients: recipients.length
         });
-        
+
         const results = await this.sendBulkEmails(
           recipients.map(to => ({ to, templateData })),
           templateName
         );
-        
-        logger.info('Email campaign completed', { 
-          campaignId, 
-          name, 
-          results: results.length 
+
+        logger.info('Email campaign completed', {
+          campaignId,
+          name,
+          results: results.length
         });
-        
+
         return results;
       },
     };
@@ -1072,7 +1054,7 @@ export class EmailService {
         success: result,
         message: result ? 'Email configuration is valid' : 'Email configuration is invalid',
       };
-    } catch (error) {
+    } catch (error: any) {
       return {
         success: false,
         message: 'Email configuration test failed',
@@ -1121,7 +1103,7 @@ export class EmailService {
         message: result.message,
         details: result.details,
       };
-    } catch (error) {
+    } catch (error: any) {
       return {
         status: 'unhealthy',
         message: 'Email service health check failed',

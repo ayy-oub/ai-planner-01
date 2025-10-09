@@ -1,10 +1,14 @@
 // src/shared/services/audit.service.ts
-
-import { injectable } from 'inversify';
+import { inject, injectable } from 'inversify';
 import { FirebaseService } from './firebase.service';
 import logger from '../utils/logger';
 import { AppError } from '../utils/errors';
 import { config } from '../config';
+import admin from 'firebase-admin';
+
+/* ------------------------------------------------------------------ */
+/* Types                                                              */
+/* ------------------------------------------------------------------ */
 
 export interface AuditLogEntry {
     id?: string;
@@ -14,11 +18,11 @@ export interface AuditLogEntry {
     action: string;
     resource: string;
     resourceId?: string;
-    metadata?: Record<string, any>;
+    metadata?: Record<string, unknown>;
     ipAddress: string;
     userAgent: string;
     timestamp: Date;
-    duration?: number; // Request duration in milliseconds
+    duration?: number;
     status: 'success' | 'failure';
     error?: string;
     requestId?: string;
@@ -47,56 +51,70 @@ export interface AuditStats {
     resources: Record<string, number>;
 }
 
+interface LogContext {
+    ip?: string;
+    userAgent?: string;
+    userId?: string;
+    userEmail?: string;
+    userRole?: string;
+    requestId?: string;
+}
+
+interface RetentionPolicy {
+    enabled: boolean;
+    retentionDays: number;
+    excludeActions: string[];
+    excludeResources: string[];
+}
+
+/* ------------------------------------------------------------------ */
+/* Service                                                            */
+/* ------------------------------------------------------------------ */
+
 @injectable()
 export class AuditService {
-    private collectionName = 'audit_logs';
-    private isEnabled: boolean;
+    private readonly collectionName = 'audit_logs';
+    private readonly isEnabled: boolean;
 
     constructor(
-        @inject(FirebaseService) private firebaseService: FirebaseService
+        @inject(FirebaseService) private readonly firebaseService: FirebaseService,
     ) {
-        this.isEnabled = config.AUDIT_ENABLED !== false;
+        this.isEnabled = config.logging.enableAuditLog !== false;
     }
 
-    /**
-     * Log an audit event
-     */
+    /* ------------------------ Core logging ---------------------------- */
+
     async logEvent(entry: AuditLogEntry): Promise<void> {
-        if (!this.isEnabled) {
-            return;
-        }
+        if (!this.isEnabled) return;
 
         try {
-            const logEntry: AuditLogEntry = {
+            const log: AuditLogEntry = {
                 ...entry,
                 id: entry.id || this.generateId(),
-                timestamp: entry.timestamp || new Date()
+                timestamp: entry.timestamp || new Date(),
             };
 
-            // Store in Firestore
             await this.firebaseService.db
                 .collection(this.collectionName)
-                .doc(logEntry.id!)
-                .set(logEntry);
+                .doc(log.id!)
+                .set(log);
 
-            // Also log to file for backup
-            logger.info('AUDIT_LOG', logEntry);
-        } catch (error) {
-            logger.error('Error writing audit log:', error);
-            // Don't throw error for audit failures - we don't want to break the main flow
+            logger.info('AUDIT_LOG', log);
+        } catch (err) {
+            logger.error('Error writing audit log:', err);
+            // swallow – audit must never break the business flow
         }
     }
 
-    /**
-     * Log a successful action
-     */
+    /* ------------------------ Convenience helpers --------------------- */
+
     async logSuccess(
         action: string,
         resource: string,
-        metadata: Record<string, any> = {},
-        context: any = {}
+        metadata: Record<string, unknown> = {},
+        context: LogContext = {},
     ): Promise<void> {
-        const entry: AuditLogEntry = {
+        return this.logEvent({
             action,
             resource,
             metadata,
@@ -107,25 +125,20 @@ export class AuditService {
             userId: context.userId,
             userEmail: context.userEmail,
             userRole: context.userRole,
-            resourceId: metadata.resourceId,
-            duration: metadata.duration,
-            requestId: context.requestId
-        };
-
-        await this.logEvent(entry);
+            resourceId: metadata.resourceId as string | undefined,
+            duration: metadata.duration as number | undefined,
+            requestId: context.requestId,
+        });
     }
 
-    /**
-     * Log a failed action
-     */
     async logFailure(
         action: string,
         resource: string,
         error: string,
-        metadata: Record<string, any> = {},
-        context: any = {}
+        metadata: Record<string, unknown> = {},
+        context: LogContext = {},
     ): Promise<void> {
-        const entry: AuditLogEntry = {
+        return this.logEvent({
             action,
             resource,
             metadata,
@@ -137,114 +150,91 @@ export class AuditService {
             userId: context.userId,
             userEmail: context.userEmail,
             userRole: context.userRole,
-            resourceId: metadata.resourceId,
-            duration: metadata.duration,
-            requestId: context.requestId
-        };
-
-        await this.logEvent(entry);
+            resourceId: metadata.resourceId as string | undefined,
+            duration: metadata.duration as number | undefined,
+            requestId: context.requestId,
+        });
     }
 
-    /**
-     * Log user authentication events
-     */
     async logAuthEvent(
         event: 'login' | 'logout' | 'register' | 'password_reset' | 'password_change' | 'mfa_enabled' | 'mfa_disabled',
         userId: string,
         userEmail: string,
         success: boolean,
-        metadata: Record<string, any> = {},
-        context: any = {}
+        metadata: Record<string, unknown> = {},
+        context: LogContext = {},
     ): Promise<void> {
-        const entry: AuditLogEntry = {
+        return this.logEvent({
             action: `AUTH_${event.toUpperCase()}`,
             resource: 'authentication',
             userId,
             userEmail,
-            userRole: metadata.userRole,
+            userRole: metadata.userRole as string | undefined,
             metadata,
             ipAddress: context.ip || 'unknown',
             userAgent: context.userAgent || 'unknown',
             status: success ? 'success' : 'failure',
-            error: success ? undefined : metadata.error,
+            error: success ? undefined : (metadata.error as string | undefined),
             timestamp: new Date(),
-            requestId: context.requestId
-        };
-
-        await this.logEvent(entry);
+            requestId: context.requestId,
+        });
     }
 
-    /**
-     * Log data access events
-     */
     async logDataAccess(
         action: 'create' | 'read' | 'update' | 'delete' | 'export' | 'import',
         resource: string,
         resourceId: string,
         userId: string,
-        metadata: Record<string, any> = {},
-        context: any = {}
+        metadata: Record<string, unknown> = {},
+        context: LogContext = {},
     ): Promise<void> {
-        const entry: AuditLogEntry = {
+        return this.logEvent({
             action: `DATA_${action.toUpperCase()}`,
             resource,
             resourceId,
             userId,
-            userEmail: metadata.userEmail,
-            userRole: metadata.userRole,
+            userEmail: metadata.userEmail as string | undefined,
+            userRole: metadata.userRole as string | undefined,
             metadata,
             ipAddress: context.ip || 'unknown',
             userAgent: context.userAgent || 'unknown',
             status: 'success',
             timestamp: new Date(),
-            requestId: context.requestId
-        };
-
-        await this.logEvent(entry);
+            requestId: context.requestId,
+        });
     }
 
-    /**
-     * Log permission events
-     */
     async logPermissionEvent(
         action: 'granted' | 'denied' | 'revoked',
         resource: string,
         resourceId: string,
         userId: string,
         permission: string,
-        metadata: Record<string, any> = {},
-        context: any = {}
+        metadata: Record<string, unknown> = {},
+        context: LogContext = {},
     ): Promise<void> {
-        const entry: AuditLogEntry = {
+        return this.logEvent({
             action: `PERMISSION_${action.toUpperCase()}`,
             resource,
             resourceId,
             userId,
-            userEmail: metadata.userEmail,
-            userRole: metadata.userRole,
-            metadata: {
-                permission,
-                ...metadata
-            },
+            userEmail: metadata.userEmail as string | undefined,
+            userRole: metadata.userRole as string | undefined,
+            metadata: { permission, ...metadata },
             ipAddress: context.ip || 'unknown',
             userAgent: context.userAgent || 'unknown',
             status: 'success',
             timestamp: new Date(),
-            requestId: context.requestId
-        };
-
-        await this.logEvent(entry);
+            requestId: context.requestId,
+        });
     }
 
-    /**
-     * Log system events
-     */
     async logSystemEvent(
         action: string,
-        metadata: Record<string, any> = {},
-        context: any = {}
+        metadata: Record<string, unknown> = {},
+        context: LogContext = {},
     ): Promise<void> {
-        const entry: AuditLogEntry = {
+        return this.logEvent({
             action: `SYSTEM_${action.toUpperCase()}`,
             resource: 'system',
             metadata,
@@ -252,291 +242,197 @@ export class AuditService {
             userAgent: context.userAgent || 'system',
             status: 'success',
             timestamp: new Date(),
-            requestId: context.requestId
-        };
-
-        await this.logEvent(entry);
+            requestId: context.requestId,
+        });
     }
 
-    /**
-     * Get audit logs with filtering
-     */
+    /* ------------------------ Querying -------------------------------- */
+
     async getAuditLogs(filter: AuditFilter = {}): Promise<{
         logs: AuditLogEntry[];
         total: number;
         hasMore: boolean;
     }> {
         try {
-            let query = this.firebaseService.db.collection(this.collectionName) as any;
+            let base: admin.firestore.CollectionReference = this.firebaseService.db.collection(this.collectionName);
 
-            // Apply filters
-            if (filter.userId) {
-                query = query.where('userId', '==', filter.userId);
-            }
+            let query: admin.firestore.Query = base;
 
-            if (filter.action) {
-                query = query.where('action', '==', filter.action);
-            }
+            if (filter.userId) query = query.where('userId', '==', filter.userId);
+            if (filter.action) query = query.where('action', '==', filter.action);
+            if (filter.resource) query = query.where('resource', '==', filter.resource);
+            if (filter.resourceId) query = query.where('resourceId', '==', filter.resourceId);
+            if (filter.status) query = query.where('status', '==', filter.status);
+            if (filter.ipAddress) query = query.where('ipAddress', '==', filter.ipAddress);
+            if (filter.dateFrom) query = query.where('timestamp', '>=', filter.dateFrom);
+            if (filter.dateTo) query = query.where('timestamp', '<=', filter.dateTo);
 
-            if (filter.resource) {
-                query = query.where('resource', '==', filter.resource);
-            }
-
-            if (filter.resourceId) {
-                query = query.where('resourceId', '==', filter.resourceId);
-            }
-
-            if (filter.status) {
-                query = query.where('status', '==', filter.status);
-            }
-
-            if (filter.ipAddress) {
-                query = query.where('ipAddress', '==', filter.ipAddress);
-            }
-
-            if (filter.dateFrom) {
-                query = query.where('timestamp', '>=', filter.dateFrom);
-            }
-
-            if (filter.dateTo) {
-                query = query.where('timestamp', '<=', filter.dateTo);
-            }
-
-            // Order by timestamp descending
             query = query.orderBy('timestamp', 'desc');
 
-            // Apply pagination
-            const limit = filter.limit || 100;
-            const offset = filter.offset || 0;
+            const limit = Math.min(filter.limit || 100, 1000);
+            query = query.limit(limit + 1);
 
-            if (offset > 0) {
-                const snapshot = await query.limit(offset).get();
-                if (!snapshot.empty) {
-                    const lastDoc = snapshot.docs[snapshot.docs.length - 1];
-                    query = query.startAfter(lastDoc);
+            if (filter.offset) {
+                const snap = await base.limit(filter.offset).get();
+                if (!snap.empty) {
+                    query = query.startAfter(snap.docs[snap.docs.length - 1]).limit(limit + 1);
                 }
             }
 
-            const snapshot = await query.limit(limit + 1).get();
-            const logs = snapshot.docs.map(doc => ({
-                id: doc.id,
-                ...doc.data()
-            } as AuditLogEntry));
-
+            const snap = await query.get();
+            const logs = snap.docs.map(d => ({ id: d.id, ...d.data() } as AuditLogEntry));
             const hasMore = logs.length > limit;
-            if (hasMore) {
-                logs.pop();
-            }
+            if (hasMore) logs.pop();
 
-            // Get total count (approximate for large datasets)
-            const totalSnapshot = await this.firebaseService.db.collection(this.collectionName).get();
-            const total = totalSnapshot.size;
-
-            return {
-                logs,
-                total,
-                hasMore
-            };
-        } catch (error) {
-            logger.error('Error fetching audit logs:', error);
-            throw new AppError('Failed to fetch audit logs', 500);
+            // cheap total – for large collections use metadata counter doc
+            const totalSnap = await this.firebaseService.db.collection(this.collectionName).get();
+            return { logs, total: totalSnap.size, hasMore };
+        } catch (err) {
+            logger.error('Error fetching audit logs:', err);
+            this.throw('Failed to fetch audit logs', 500);
         }
     }
 
-    /**
-     * Get audit statistics
-     */
     async getAuditStats(filter: AuditFilter = {}): Promise<AuditStats> {
-        try {
-            const { logs } = await this.getAuditLogs({ ...filter, limit: 10000 });
+        const { logs } = await this.getAuditLogs({ ...filter, limit: 10_000 });
 
-            const stats: AuditStats = {
-                totalLogs: logs.length,
-                successCount: 0,
-                failureCount: 0,
-                uniqueUsers: new Set(),
-                uniqueIPs: new Set(),
-                actions: {},
-                resources: {}
-            };
+        const internal: MutableStats = {
+            totalLogs: logs.length,
+            successCount: 0,
+            failureCount: 0,
+            uniqueUsers: new Set<string>(),
+            uniqueIPs: new Set<string>(),
+            actions: {},
+            resources: {},
+        };
 
-            logs.forEach(log => {
-                // Count success/failure
-                if (log.status === 'success') {
-                    stats.successCount++;
-                } else {
-                    stats.failureCount++;
-                }
+        for (const log of logs) {
+            if (log.status === 'success') internal.successCount++;
+            else internal.failureCount++;
 
-                // Count unique users and IPs
-                if (log.userId) {
-                    stats.uniqueUsers.add(log.userId);
-                }
-                if (log.ipAddress && log.ipAddress !== 'unknown') {
-                    stats.uniqueIPs.add(log.ipAddress);
-                }
+            if (log.userId) internal.uniqueUsers.add(log.userId);
+            if (log.ipAddress && log.ipAddress !== 'unknown') internal.uniqueIPs.add(log.ipAddress);
 
-                // Count actions
-                stats.actions[log.action] = (stats.actions[log.action] || 0) + 1;
-
-                // Count resources
-                stats.resources[log.resource] = (stats.resources[log.resource] || 0) + 1;
-            });
-
-            return {
-                ...stats,
-                uniqueUsers: stats.uniqueUsers.size,
-                uniqueIPs: stats.uniqueIPs.size
-            };
-        } catch (error) {
-            logger.error('Error fetching audit stats:', error);
-            throw new AppError('Failed to fetch audit statistics', 500);
+            internal.actions[log.action] = (internal.actions[log.action] || 0) + 1;
+            internal.resources[log.resource] = (internal.resources[log.resource] || 0) + 1;
         }
+
+        return {
+            totalLogs: internal.totalLogs,
+            successCount: internal.successCount,
+            failureCount: internal.failureCount,
+            uniqueUsers: internal.uniqueUsers.size,
+            uniqueIPs: internal.uniqueIPs.size,
+            actions: internal.actions,
+            resources: internal.resources,
+        };
     }
 
-    /**
-     * Get audit logs for a specific user
-     */
-    async getUserAuditLogs(userId: string, limit: number = 100): Promise<AuditLogEntry[]> {
-        return this.getAuditLogs({ userId, limit }).then(result => result.logs);
+    async getUserAuditLogs(userId: string, limit = 100): Promise<AuditLogEntry[]> {
+        return this.getAuditLogs({ userId, limit }).then(r => r.logs);
     }
 
-    /**
-     * Get audit logs for a specific resource
-     */
-    async getResourceAuditLogs(resource: string, resourceId: string, limit: number = 100): Promise<AuditLogEntry[]> {
-        return this.getAuditLogs({ resource, resourceId, limit }).then(result => result.logs);
+    async getResourceAuditLogs(resource: string, resourceId: string, limit = 100): Promise<AuditLogEntry[]> {
+        return this.getAuditLogs({ resource, resourceId, limit }).then(r => r.logs);
     }
 
-    /**
-     * Export audit logs
-     */
+    /* ------------------------ Export / Cleanup ------------------------ */
+
     async exportAuditLogs(filter: AuditFilter = {}, format: 'json' | 'csv' = 'json'): Promise<string> {
-        try {
-            const { logs } = await this.getAuditLogs({ ...filter, limit: 50000 });
-
-            if (format === 'csv') {
-                return this.convertToCSV(logs);
-            } else {
-                return JSON.stringify(logs, null, 2);
-            }
-        } catch (error) {
-            logger.error('Error exporting audit logs:', error);
-            throw new AppError('Failed to export audit logs', 500);
-        }
+        const { logs } = await this.getAuditLogs({ ...filter, limit: 50_000 });
+        return format === 'csv' ? this.convertToCSV(logs) : JSON.stringify(logs, null, 2);
     }
 
-    /**
-     * Clean up old audit logs
-     */
-    async cleanupAuditLogs(retentionDays: number = 90): Promise<number> {
-        try {
-            const cutoffDate = new Date();
-            cutoffDate.setDate(cutoffDate.getDate() - retentionDays);
+    async cleanupAuditLogs(retentionDays = 90): Promise<number> {
+        const policy = await this.getRetentionPolicy();
+        if (!policy.enabled) return 0;
 
-            const snapshot = await this.firebaseService.db
-                .collection(this.collectionName)
-                .where('timestamp', '<', cutoffDate)
-                .get();
+        const cutoff = new Date();
+        cutoff.setDate(cutoff.getDate() - retentionDays);
 
-            const batch = this.firebaseService.db.batch();
-            let deletedCount = 0;
+        let q = this.firebaseService.db
+            .collection(this.collectionName)
+            .where('timestamp', '<', cutoff) as FirebaseFirestore.Query;
 
-            snapshot.docs.forEach(doc => {
-                batch.delete(doc.ref);
-                deletedCount++;
-            });
+        if (policy.excludeActions.length)
+            q = q.where('action', 'not-in', policy.excludeActions);
+        if (policy.excludeResources.length)
+            q = q.where('resource', 'not-in', policy.excludeResources);
 
-            await batch.commit();
+        const snap = await q.get();
 
-            logger.info(`Cleaned up ${deletedCount} audit logs older than ${retentionDays} days`);
-            return deletedCount;
-        } catch (error) {
-            logger.error('Error cleaning up audit logs:', error);
-            throw new AppError('Failed to cleanup audit logs', 500);
-        }
+        const batch = this.firebaseService.db.batch();
+        snap.docs.forEach(d => batch.delete(d.ref));
+        await batch.commit();
+
+        logger.info(`Cleaned up ${snap.size} audit logs older than ${retentionDays} days`);
+        return snap.size;
     }
 
-    /**
-     * Create audit log retention policy
-     */
-    async setRetentionPolicy(policy: {
-        enabled: boolean;
-        retentionDays: number;
-        excludeActions?: string[];
-        excludeResources?: string[];
-    }): Promise<void> {
+    /* ------------------------ Retention policy ------------------------ */
+
+    async setRetentionPolicy(policy: RetentionPolicy): Promise<void> {
         try {
             await this.firebaseService.db
                 .collection('system_config')
                 .doc('audit_retention')
                 .set(policy);
-
             logger.info('Audit retention policy updated', policy);
-        } catch (error) {
-            logger.error('Error setting retention policy:', error);
-            throw new AppError('Failed to set retention policy', 500);
+        } catch (err) {
+            logger.error('Error setting retention policy:', err);
+            this.throw('Failed to set retention policy', 500);
         }
     }
 
-    /**
-     * Get retention policy
-     */
-    async getRetentionPolicy(): Promise<{
-        enabled: boolean;
-        retentionDays: number;
-        excludeActions: string[];
-        excludeResources: string[];
-    }> {
+    async getRetentionPolicy(): Promise<RetentionPolicy> {
         try {
-            const doc = await this.firebaseService.db
+            const snap = await this.firebaseService.db
                 .collection('system_config')
                 .doc('audit_retention')
                 .get();
-
-            if (doc.exists) {
-                return doc.data() as any;
-            }
-
-            // Default policy
-            return {
-                enabled: true,
-                retentionDays: 90,
-                excludeActions: [],
-                excludeResources: []
-            };
-        } catch (error) {
-            logger.error('Error fetching retention policy:', error);
-            throw new AppError('Failed to fetch retention policy', 500);
+            return snap.exists
+                ? (snap.data() as RetentionPolicy)
+                : { enabled: true, retentionDays: 90, excludeActions: [], excludeResources: [] };
+        } catch (err) {
+            logger.error('Error fetching retention policy:', err);
+            this.throw('Failed to fetch retention policy', 500);
         }
     }
 
-    /**
-     * Convert audit logs to CSV format
-     */
+    /* ------------------------ Private --------------------------------- */
+
     private convertToCSV(logs: AuditLogEntry[]): string {
         const headers = ['Timestamp', 'Action', 'Resource', 'Resource ID', 'User ID', 'User Email', 'IP Address', 'Status', 'Error'];
-        const rows = logs.map(log => [
-            log.timestamp.toISOString(),
-            log.action,
-            log.resource,
-            log.resourceId || '',
-            log.userId || '',
-            log.userEmail || '',
-            log.ipAddress,
-            log.status,
-            log.error || ''
+        const rows = logs.map(l => [
+            l.timestamp.toISOString(),
+            l.action,
+            l.resource,
+            l.resourceId ?? '',
+            l.userId ?? '',
+            l.userEmail ?? '',
+            l.ipAddress,
+            l.status,
+            l.error ?? '',
         ]);
-
-        return [headers, ...rows].map(row =>
-            row.map(field => `"${String(field).replace(/"/g, '""')}"`).join(',')
-        ).join('\n');
+        return [headers, ...rows]
+            .map(r => r.map(c => `"${String(c).replace(/"/g, '""')}"`).join(','))
+            .join('\n');
     }
 
-    /**
-     * Generate unique ID for audit log
-     */
     private generateId(): string {
-        return `audit_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+        return `audit_${Date.now()}_${Math.random().toString(36).slice(2, 11)}`;
     }
+
+    private throw(message: string, code: number): never {
+        throw new AppError(message, code);
+    }
+}
+
+/* ------------------------------------------------------------------ */
+/* Internal helper types                                              */
+/* ------------------------------------------------------------------ */
+
+interface MutableStats extends Omit<AuditStats, 'uniqueUsers' | 'uniqueIPs'> {
+    uniqueUsers: Set<string>;
+    uniqueIPs: Set<string>;
 }

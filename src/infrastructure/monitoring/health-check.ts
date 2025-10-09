@@ -4,7 +4,6 @@ import { mongoConnection } from '../database/mongoose';
 import { queueManager } from '../queue/bullmq';
 import { config } from '../../shared/config';
 import { logger } from '../../shared/utils/logger';
-import { AppError } from '../../shared/utils/errors';
 import os from 'os';
 import { exec } from 'child_process';
 import { promisify } from 'util';
@@ -383,4 +382,9 @@ class HealthCheckService {
 
 // Export singleton instance
 export const healthCheckService = HealthCheckService.getInstance();
+
+export const healthCheck = async () => {
+    return await healthCheckService.getHealthStatus(true);
+};
+
 export default healthCheckService;

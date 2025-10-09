@@ -1263,7 +1263,3 @@ Brief description of changes
 This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
 
 ---
-
-**⭐ Star this repository if you find it helpful!**
-
-**🚀 Happy Planning with AI!**

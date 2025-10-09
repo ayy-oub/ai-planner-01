@@ -4,12 +4,12 @@ import cluster from 'cluster';
 import os from 'os';
 import { createTerminus } from '@godaddy/terminus';
 import app from './app';
-import { config } from '@shared/config';
-import { logger } from '@shared/utils/logger';
-import { healthCheck } from '@infrastructure/monitoring/health-check';
-import { connectDatabase } from '@infrastructure/database/firebase';
-import { connectRedis } from '@infrastructure/database/redis';
-import { gracefulShutdown } from '@shared/utils/graceful-shutdown';
+import { config } from '../src/shared/config';
+import { logger } from '../src/shared/utils/logger';
+import { healthCheck } from '../src/infrastructure/monitoring/health-check';
+import { connectDatabase } from '../src/infrastructure/database/firebase';
+import { connectRedis } from '../src/infrastructure/database/redis';
+import { setupGracefulShutdown } from '../src/shared/utils/graceful-shutdown';
 
 const numCPUs = os.cpus().length;
 const PORT = config.app.port;
@@ -18,7 +18,7 @@ async function startServer() {
     try {
         // Connect to databases
         await connectDatabase();
-        await connectRedis();
+        const redisClient = await connectRedis();
 
         const server = app.listen(PORT, () => {
             logger.info(`🚀 Server running on port ${PORT} in ${config.app.env} mode`);
@@ -31,6 +31,8 @@ async function startServer() {
             }
         });
 
+        const shutdownManager = setupGracefulShutdown(server, redisClient);
+
         // Graceful shutdown
         createTerminus(server, {
             signal: 'SIGINT',
@@ -41,9 +43,9 @@ async function startServer() {
             },
             onSignal: async () => {
                 logger.info('Server is starting cleanup');
-                await gracefulShutdown();
+                await shutdownManager.shutdown('SIGINT');
             },
-            onShutdown: () => {
+            onShutdown: async () => {
                 logger.info('Cleanup finished, server is shutting down');
             },
             timeout: 10000,

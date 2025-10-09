@@ -1,10 +1,10 @@
 import { Request, Response, NextFunction } from 'express';
 import { RateLimiterRedis } from 'rate-limiter-flexible';
 import slowDown from 'express-slow-down';
-import { config } from '@shared/config';
-import { CacheService } from '@shared/services/cache.service';
-import { AppError, TooManyRequestsError } from '@shared/utils/errors';
-import { Logger } from '@shared/utils/logger';
+import { config } from '../config';
+import { CacheService } from '../services/cache.service';
+import { AppError, RateLimitError } from '../utils/errors';
+import { logger } from '../utils/logger';
 
 const cacheService = new CacheService();
 
@@ -42,10 +42,10 @@ export class SecurityMiddleware {
             const key = req.ip || 'unknown';
             await rateLimiter.consume(key);
             next();
-        } catch (rateLimiterRes) {
+        } catch (rateLimiterRes: any) {
             const secs = Math.round(rateLimiterRes.msBeforeNext / 1000) || 1;
             res.set('Retry-After', String(secs));
-            next(new TooManyRequestsError(`Too many requests, please try again in ${secs} seconds`));
+            next(new RateLimitError(`Too many requests, please try again in ${secs} seconds`));
         }
     };
 
@@ -57,10 +57,10 @@ export class SecurityMiddleware {
             const key = req.ip || 'unknown';
             await authRateLimiter.consume(key);
             next();
-        } catch (rateLimiterRes) {
+        } catch (rateLimiterRes: any) {
             const secs = Math.round(rateLimiterRes.msBeforeNext / 1000) || 1;
             res.set('Retry-After', String(secs));
-            next(new TooManyRequestsError(`Too many authentication attempts, please try again in ${secs} seconds`));
+            next(new RateLimitError(`Too many authentication attempts, please try again in ${secs} seconds`));
         }
     };
 
@@ -76,10 +76,10 @@ export class SecurityMiddleware {
 
             await apiKeyRateLimiter.consume(apiKey);
             next();
-        } catch (rateLimiterRes) {
+        } catch (rateLimiterRes: any) {
             const secs = Math.round(rateLimiterRes.msBeforeNext / 1000) || 1;
             res.set('Retry-After', String(secs));
-            next(new TooManyRequestsError(`API key rate limit exceeded, please try again in ${secs} seconds`));
+            next(new RateLimitError(`API key rate limit exceeded, please try again in ${secs} seconds`));
         }
     };
 
@@ -101,7 +101,7 @@ export class SecurityMiddleware {
     static blockMaliciousIPs = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
         const maliciousIPs = await cacheService.get('malicious_ips');
         if (maliciousIPs && maliciousIPs.includes(req.ip)) {
-            Logger.warn('Blocked request from malicious IP', { ip: req.ip });
+            logger.warn('Blocked request from malicious IP', { ip: req.ip });
             return next(new AppError('Access denied', 403));
         }
         next();
@@ -171,7 +171,7 @@ export class SecurityMiddleware {
             const expectedSignature = this.generateSignature(req, timestamp);
             return signature === expectedSignature;
         } catch (error) {
-            Logger.error('Signature verification failed', error);
+            logger.error('Signature verification failed', error);
             return false;
         }
     }
@@ -199,9 +199,6 @@ export const securityMiddleware = async (req: Request, res: Response, next: Next
     next();
 };
 
-export const rateLimiter = SecurityMiddleware.rateLimit;
-export const authRateLimiter = SecurityMiddleware.authRateLimit;
-export const apiKeyRateLimiter = SecurityMiddleware.apiKeyRateLimit;
 export const speedLimiter = SecurityMiddleware.speedLimiter;
 export const blockMaliciousIPs = SecurityMiddleware.blockMaliciousIPs;
 export const validateApiKey = SecurityMiddleware.validateApiKey;

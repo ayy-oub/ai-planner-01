@@ -39,8 +39,7 @@ class FirebaseConnection {
 
                 // Enable offline persistence for better performance
                 this.db.settings({
-                    ignoreUndefinedProperties: true,
-                    cacheSizeBytes: admin.firestore.CACHE_SIZE_UNLIMITED,
+                    ignoreUndefinedProperties: true
                 });
 
                 this.isConnected = true;
@@ -108,4 +107,9 @@ class FirebaseConnection {
 
 // Export singleton instance
 export const firebaseConnection = FirebaseConnection.getInstance();
+
+export async function connectDatabase(): Promise<void> {
+    firebaseConnection.getDatabase(); // ensures initialization
+}
+
 export default firebaseConnection;

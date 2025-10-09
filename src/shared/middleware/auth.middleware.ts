@@ -1,127 +1,145 @@
 import { Request, Response, NextFunction } from 'express';
 import jwt from 'jsonwebtoken';
-import { config } from '@shared/config';
-import { AppError } from '@shared/utils/errors';
-import { CacheService } from '@shared/services/cache.service';
-import { FirebaseService } from '@shared/services/firebase.service';
-import { AuthRequest, JWTPayload } from '@shared/types/auth.types';
-import { Logger } from '@shared/utils/logger';
+import { config } from '../config'; // Adjust path accordingly
+import { AppError, ErrorCode } from '../utils/errors';
+import { CacheService } from '../services/cache.service';
+import { FirebaseService } from '../services/firebase.service';
+import { AuthService } from '../../modules/auth/auth.service';
+import { AuthRequest, JwtPayload } from '../types/auth.types'; // Adjust paths
+import { logger } from '../utils/logger';
 
 const cacheService = new CacheService();
-const firebaseService = new FirebaseService();
+const firebaseService = FirebaseService.getInstance();
+
+if (!config.security.jwtSecret) {
+    throw new Error('JWT secret is not configured!');
+}
 
 export class AuthMiddleware {
+    private authService: AuthService;
+
+    constructor() {
+        this.authService = new AuthService();
+    }
+
     /**
-     * Authenticate user and attach to request
+     * Authenticate user and attach user profile to request
      */
-    static authenticate = async (req: AuthRequest, res: Response, next: NextFunction): Promise<void> => {
+    authenticate = async (req: AuthRequest, res: Response, next: NextFunction): Promise<void> => {
         try {
             const authHeader = req.headers.authorization;
-
             if (!authHeader || !authHeader.startsWith('Bearer ')) {
-                return next(new AppError('No token provided', 401));
+                return next(new AppError('No token provided', 401, undefined, ErrorCode.TOKEN_INVALID));
             }
 
             const token = authHeader.substring(7);
 
-            // Check if token is blacklisted
-            const isBlacklisted = await cacheService.get(`blacklist:${token}`);
-            if (isBlacklisted) {
-                return next(new AppError('Token has been revoked', 401));
+            // Check blacklist (token revocation)
+            const blacklisted = await cacheService.get(`blacklist:${token}`);
+            if (blacklisted) {
+                return next(new AppError('Token has been revoked', 401, undefined, ErrorCode.TOKEN_INVALID));
             }
 
             // Verify token
-            let decoded: JWTPayload;
+            let decoded: JwtPayload;
             try {
-                decoded = jwt.verify(token, config.security.jwtSecret) as JWTPayload;
+                decoded = jwt.verify(token, config.security.jwtSecret) as JwtPayload;
             } catch (error) {
                 if (error instanceof jwt.TokenExpiredError) {
-                    return next(new AppError('Token has expired', 401));
+                    return next(new AppError('Token expired', 401, undefined, ErrorCode.TOKEN_EXPIRED));
                 }
                 if (error instanceof jwt.JsonWebTokenError) {
-                    return next(new AppError('Invalid token', 401));
+                    return next(new AppError('Invalid token', 401, undefined, ErrorCode.TOKEN_INVALID));
                 }
                 throw error;
             }
 
             // Check token type
             if (decoded.type !== 'access') {
-                return next(new AppError('Invalid token type', 401));
+                return next(new AppError('Invalid token type', 401, undefined, ErrorCode.TOKEN_INVALID));
             }
 
-            // Check if user logged out
-            const logoutTime = await cacheService.get(`logout:${decoded.uid}`);
-            if (logoutTime && decoded.iat && decoded.iat < parseInt(logoutTime)) {
-                return next(new AppError('Token has been revoked', 401));
+            // Check logout time if available
+            const logoutTimeStr = await cacheService.get(`logout:${decoded.uid}`);
+            const logoutTimeNum = logoutTimeStr ? parseInt(logoutTimeStr, 10) : NaN;
+            if (!isNaN(logoutTimeNum) && decoded.iat && decoded.iat < logoutTimeNum) {
+                return next(new AppError('Token has been revoked', 401, undefined, ErrorCode.TOKEN_INVALID));
             }
 
-            // Get user from Firebase
-            let firebaseUser;
-            try {
-                firebaseUser = await firebaseService.getUser(decoded.uid);
-            } catch (error) {
-                return next(new AppError('User not found', 404));
+            // Fetch user from AuthService (your DB) and Firebase (auth state)
+            const [user, firebaseUser] = await Promise.all([
+                this.authService.getProfile(decoded.uid),
+                firebaseService.getUser(decoded.uid)
+            ]);
+
+            if (!user) {
+                return next(new AppError('User not found', 404, undefined, ErrorCode.USER_NOT_FOUND));
             }
 
-            // Check if user is disabled
+            if (!firebaseUser) {
+                return next(new AppError('User not found in Firebase', 404, undefined, ErrorCode.USER_NOT_FOUND));
+            }
+
+            // Check account locked
+            if (user.lockedUntil && user.lockedUntil > new Date()) {
+                return next(new AppError('Account is locked', 423, undefined, ErrorCode.ACCOUNT_LOCKED));
+            }
+
+            // Check if Firebase account disabled
             if (firebaseUser.disabled) {
-                return next(new AppError('Account has been disabled', 403));
+                return next(new AppError('Account has been disabled', 403, undefined, ErrorCode.ACCOUNT_LOCKED));
             }
 
-            // Attach user to request
+            // Check email verification if required
+            if (!user.emailVerified && config.features.enableEmailVerification) {
+                return next(new AppError('Email not verified', 403, undefined, ErrorCode.EMAIL_NOT_VERIFIED));
+            }
+
+            // Attach combined user info to request
             req.user = {
-                uid: decoded.uid,
-                email: firebaseUser.email || '',
-                displayName: firebaseUser.displayName || '',
-                emailVerified: firebaseUser.emailVerified || false,
+                ...user,
+                email: firebaseUser.email || user.email,
+                displayName: firebaseUser.displayName || user.displayName,
+                emailVerified: firebaseUser.emailVerified ?? user.emailVerified,
             };
 
-            // Log authentication success
-            Logger.debug('User authenticated', { userId: decoded.uid, path: req.path });
-
+            logger.debug('User authenticated', { userId: user.uid, email: user.email, path: req.path });
             next();
         } catch (error) {
-            Logger.error('Authentication error', error);
-            next(new AppError('Authentication failed', 401));
+            logger.error('Authentication error', error);
+            next(error instanceof AppError ? error : new AppError('Authentication failed', 401));
         }
     };
 
     /**
-     * Optional authentication - continues without user if token is invalid
+     * Optional authentication — attach user if valid token, else continue silently
      */
-    static optional = async (req: AuthRequest, res: Response, next: NextFunction): Promise<void> => {
+    optional = async (req: AuthRequest, res: Response, next: NextFunction): Promise<void> => {
         try {
             const authHeader = req.headers.authorization;
-
             if (!authHeader || !authHeader.startsWith('Bearer ')) {
                 return next();
             }
-
             const token = authHeader.substring(7);
 
+            let decoded: JwtPayload;
             try {
-                const decoded = jwt.verify(token, config.security.jwtSecret) as JWTPayload;
-
-                if (decoded.type === 'access') {
-                    const firebaseUser = await firebaseService.getUser(decoded.uid);
-
-                    if (!firebaseUser.disabled) {
-                        req.user = {
-                            uid: decoded.uid,
-                            email: firebaseUser.email || '',
-                            displayName: firebaseUser.displayName || '',
-                            emailVerified: firebaseUser.emailVerified || false,
-                        };
-                    }
-                }
-            } catch (error) {
-                // Ignore authentication errors for optional auth
-                Logger.debug('Optional authentication failed', { error: error.message });
+                decoded = jwt.verify(token, config.security.jwtSecret) as JwtPayload;
+            } catch {
+                return next(); // invalid token ignored
             }
 
+            if (decoded.type !== 'access') {
+                return next();
+            }
+
+            const user = await this.authService.getProfile(decoded.uid);
+            if (user && (!user.lockedUntil || user.lockedUntil <= new Date())) {
+                req.user = user;
+            }
             next();
         } catch (error) {
-            Logger.error('Optional authentication error', error);
+            logger.debug('Optional authentication failed', error);
             next();
         }
     };
@@ -129,44 +147,99 @@ export class AuthMiddleware {
     /**
      * Require email verification
      */
-    static requireEmailVerification = (req: AuthRequest, res: Response, next: NextFunction): void => {
+    requireEmailVerification = (req: AuthRequest, res: Response, next: NextFunction): void => {
         if (!req.user?.emailVerified) {
-            return next(new AppError('Please verify your email address', 403));
+            return next(new AppError('Please verify your email address', 403, undefined, ErrorCode.EMAIL_NOT_VERIFIED));
         }
         next();
     };
 
     /**
-     * Check specific permissions
+     * Require specific roles (by subscription plan or roles)
      */
-    static requirePermission = (permission: string) => {
-        return async (req: AuthRequest, res: Response, next: NextFunction): Promise<void> => {
-            try {
-                if (!req.user) {
-                    return next(new AppError('Authentication required', 401));
-                }
-
-                const hasPermission = await firebaseService.checkUserPermission(
-                    req.user.uid,
-                    permission
-                );
-
-                if (!hasPermission) {
-                    return next(new AppError('Insufficient permissions', 403));
-                }
-
-                next();
-            } catch (error) {
-                Logger.error('Permission check error', error);
-                next(new AppError('Permission check failed', 500));
+    requireRoles = (...roles: string[]) => {
+        return (req: AuthRequest, res: Response, next: NextFunction): void => {
+            if (!req.user) {
+                return next(new AppError('User not authenticated', 401, undefined, ErrorCode.UNAUTHORIZED));
             }
+
+            // Could check req.user.role or req.user.subscription.plan depending on your system
+            const userRoleOrPlan = req.user.role || req.user.subscription?.plan;
+            const hasRole = roles.some(role => role === userRoleOrPlan);
+
+            if (!hasRole) {
+                return next(new AppError('Insufficient permissions', 403, undefined, ErrorCode.INSUFFICIENT_PERMISSIONS));
+            }
+            next();
         };
     };
 
     /**
-     * Rate limiting by user ID
+     * Require premium or enterprise subscription
      */
-    static rateLimitByUser = (windowMs: number, max: number) => {
+    requirePremium = (req: AuthRequest, res: Response, next: NextFunction): void => {
+        if (!req.user) {
+            return next(new AppError('User not authenticated', 401, undefined, ErrorCode.UNAUTHORIZED));
+        }
+
+        const plan = req.user.subscription?.plan;
+        const isPremium = plan === 'premium' || plan === 'enterprise';
+
+        if (!isPremium) {
+            return next(new AppError('Premium subscription required', 403, undefined, ErrorCode.INSUFFICIENT_PERMISSIONS));
+        }
+        next();
+    };
+
+    /**
+     * Check if user can access resource
+     */
+    checkResourceAccess = (resourceUserId: string) => {
+        return (req: AuthRequest, res: Response, next: NextFunction): void => {
+            if (!req.user) {
+                return next(new AppError('User not authenticated', 401, undefined, ErrorCode.UNAUTHORIZED));
+            }
+
+            // Owner can access
+            if (req.user.uid === resourceUserId) {
+                return next();
+            }
+
+            // Enterprise (admin) users can access anything
+            if (req.user.subscription?.plan === 'enterprise') {
+                return next();
+            }
+
+            // TODO: Add collaborator logic here if applicable
+
+            return next(new AppError('Access denied to this resource', 403, undefined, ErrorCode.RESOURCE_ACCESS_DENIED));
+        };
+    };
+
+    /**
+     * Verify API key (service-to-service)
+     */
+    verifyApiKey = (req: Request, res: Response, next: NextFunction): void => {
+        try {
+            const apiKey = req.headers['x-api-key'] as string;
+            if (!apiKey) {
+                return next(new AppError('API key required', 401, undefined, ErrorCode.UNAUTHORIZED));
+            }
+
+            if (apiKey !== config.security.apiKeySecret) {
+                return next(new AppError('Invalid API key', 401, undefined, ErrorCode.UNAUTHORIZED));
+            }
+
+            next();
+        } catch (error) {
+            next(error);
+        }
+    };
+
+    /**
+     * Rate limit by user ID (windowMs in ms, max number of requests)
+     */
+    rateLimitByUser = (windowMs: number, max: number) => {
         return async (req: AuthRequest, res: Response, next: NextFunction): Promise<void> => {
             if (!req.user) {
                 return next();
@@ -182,14 +255,27 @@ export class AuthMiddleware {
             if (current > max) {
                 return next(new AppError('Too many requests', 429));
             }
+            next();
+        };
+    };
 
+    /**
+     * Log user activity for auditing
+     */
+    logActivity = (action: string, metadata?: any) => {
+        return (req: AuthRequest, res: Response, next: NextFunction): void => {
+            if (req.user) {
+                logger.info(action, req.user.uid, req.originalUrl, {
+                    method: req.method,
+                    ip: req.ip,
+                    userAgent: req.get('User-Agent'),
+                    ...metadata,
+                    domain: 'audit',
+                });
+            }
             next();
         };
     };
 }
 
-export const authenticate = AuthMiddleware.authenticate;
-export const optionalAuth = AuthMiddleware.optional;
-export const requireEmailVerification = AuthMiddleware.requireEmailVerification;
-export const requirePermission = AuthMiddleware.requirePermission;
-export const rateLimitByUser = AuthMiddleware.rateLimitByUser;
+export const authMiddleware = new AuthMiddleware();

@@ -1,3 +1,5 @@
+import { AndroidConfig, ApnsConfig, WebpushConfig } from "node_modules/firebase-admin/lib/messaging/messaging-api";
+
 /**
  * Base entity interface for all database entities
  */
@@ -157,6 +159,21 @@ export interface FirestoreConfig {
         port: number;
     };
 }
+
+export interface PushToken {
+    userId: string;
+    tokens: string[];          // can be multiple devices
+    platform?: 'android' | 'ios' | 'web';
+  }
+  
+  export interface PushPayload {
+    title: string;
+    body: string;
+    data?: Record<string, string>;
+    android?: AndroidConfig;
+    apns?: ApnsConfig;
+    webpush?: WebpushConfig;
+  }
 
 /**
  * Query options

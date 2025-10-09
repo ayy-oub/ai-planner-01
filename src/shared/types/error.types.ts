@@ -101,7 +101,6 @@ export enum AppErrorCode {
     CACHE_INVALIDATION_ERROR = 'CACHE_INVALIDATION_ERROR',
 
     // File Operation Errors
-    FILE_NOT_FOUND = 'FILE_NOT_FOUND',
     FILE_ACCESS_DENIED = 'FILE_ACCESS_DENIED',
     FILE_READ_ERROR = 'FILE_READ_ERROR',
     FILE_WRITE_ERROR = 'FILE_WRITE_ERROR',
@@ -502,22 +501,3 @@ export interface ErrorAlertingConfig {
         delay: number;
     }>;
 }
-
-export {
-    AppErrorCode,
-    HttpStatusCode,
-    ErrorSeverity,
-    ErrorCategory,
-    FieldError,
-    ValidationError,
-    ErrorResponse,
-    SuccessResponse,
-    ErrorContext,
-    ErrorTrackingInfo,
-    ErrorRateLimitInfo,
-    ErrorAggregation,
-    ErrorRecoveryStrategy,
-    ErrorResponseHeaders,
-    ErrorLoggingConfig,
-    ErrorAlertingConfig,
-};

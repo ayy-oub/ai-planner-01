@@ -1,6 +1,5 @@
 import express, { Application } from 'express';
 import helmet from 'helmet';
-import cors from 'cors';
 import compression from 'compression';
 import morgan from 'morgan';
 import mongoSanitize from 'express-mongo-sanitize';
@@ -8,26 +7,28 @@ import hpp from 'hpp';
 import xss from 'xss-clean';
 import swaggerUi from 'swagger-ui-express';
 import swaggerJsdoc from 'swagger-jsdoc';
+import 'reflect-metadata';
 
-import { config } from '@shared/config';
-import { logger, stream } from '@shared/utils/logger';
-import { errorHandler, notFoundHandler } from '@shared/middleware/error.middleware';
-import { securityMiddleware } from '@shared/middleware/security.middleware';
-import { rateLimitMiddleware } from '@shared/middleware/rate-limit.middleware';
-import { requestIdMiddleware } from '@shared/middleware/request-id.middleware';
-import { loggingMiddleware } from '@shared/middleware/logging.middleware';
+import { config } from './shared/config';
+import { stream } from './shared/utils/logger';
+import { errorHandler, notFoundHandler } from './shared/middleware/error.middleware';
+import { securityMiddleware } from './shared/middleware/security.middleware';
+import { rateLimiter } from './shared/middleware/rate-limit.middleware';
+import { requestId } from './shared/middleware/request-id.middleware';
+import { requestLogger, errorLogger, performanceLogger } from './shared/middleware/logging.middleware';
 
 // Import routes
-import authRoutes from '@modules/auth/auth.routes';
-import plannerRoutes from '@modules/planner/planner.routes';
-import sectionRoutes from '@modules/section/section.routes';
-import activityRoutes from '@modules/activity/activity.routes';
-import aiRoutes from '@modules/ai/ai.routes';
-import exportRoutes from '@modules/export/export.routes';
-import calendarRoutes from '@modules/calendar/calendar.routes';
-import adminRoutes from '@modules/admin/admin.routes';
-import userRoutes from '@modules/user/user.routes';
-import healthRoutes from '@modules/health/health.routes';
+import authRoutes from './modules/auth/auth.routes';
+import plannerRoutes from './modules/planner/planner.routes';
+import sectionRoutes from './modules/section/section.routes';
+import activityRoutes from './modules/activity/activity.routes';
+import aiRoutes from './modules/ai/ai.routes';
+import exportRoutes from './modules/export/export.routes';
+import calendarRoutes from './modules/calendar/calendar.routes';
+import adminRoutes from './modules/admin/admin.routes';
+import userRoutes from './modules/user/user.routes';
+import healthRoutes from './modules/health/health.routes';
+import { corsMiddleware } from './shared/middleware/cors.middleware';
 
 const app: Application = express();
 
@@ -45,12 +46,11 @@ app.use(mongoSanitize());
 app.use(hpp());
 
 // CORS configuration
-app.use(cors({
-    origin: config.cors.origin,
-    credentials: config.cors.credentials,
-    methods: config.cors.methods,
-    allowedHeaders: config.cors.headers,
-}));
+if (config.app.env === 'production') {
+    app.use(corsMiddleware.strictCors);
+} else {
+    app.use(corsMiddleware.cors);
+}
 
 // Compression
 app.use(compression());
@@ -60,16 +60,18 @@ app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 
 // Request ID middleware
-app.use(requestIdMiddleware);
+app.use(requestId);
 
 // Logging middleware
 app.use(morgan(config.app.env === 'production' ? 'combined' : 'dev', { stream }));
 
 // Custom logging middleware
-app.use(loggingMiddleware);
+app.use(requestLogger);
+app.use(errorLogger);
+app.use(performanceLogger);
 
 // Rate limiting
-app.use(rateLimitMiddleware);
+app.use(rateLimiter);
 
 // Security middleware
 app.use(securityMiddleware);
@@ -119,15 +121,17 @@ if (config.swagger.enabled && config.app.env !== 'production') {
 app.use('/health', healthRoutes);
 
 // API routes
-app.use(`${config.app.prefix}/auth`, authRoutes);
-app.use(`${config.app.prefix}/planners`, plannerRoutes);
-app.use(`${config.app.prefix}/sections`, sectionRoutes);
-app.use(`${config.app.prefix}/activities`, activityRoutes);
-app.use(`${config.app.prefix}/ai`, aiRoutes);
-app.use(`${config.app.prefix}/export`, exportRoutes);
-app.use(`${config.app.prefix}/calendar`, calendarRoutes);
-app.use(`${config.app.prefix}/admin`, adminRoutes);
-app.use(`${config.app.prefix}/users`, userRoutes);
+app.use(`${config.app.prefix}/admin`, corsMiddleware.adminCors, adminRoutes);
+
+// Use apiCors middleware for API routes (auth, planners, sections, activities, ai, export, calendar, users)
+app.use(`${config.app.prefix}/auth`, corsMiddleware.publicCors, authRoutes);
+app.use(`${config.app.prefix}/planners`, corsMiddleware.apiCors, plannerRoutes);
+app.use(`${config.app.prefix}/sections`, corsMiddleware.apiCors, sectionRoutes);
+app.use(`${config.app.prefix}/activities`, corsMiddleware.apiCors, activityRoutes);
+app.use(`${config.app.prefix}/ai`, corsMiddleware.apiCors, aiRoutes);
+app.use(`${config.app.prefix}/export`, corsMiddleware.apiCors, exportRoutes);
+app.use(`${config.app.prefix}/calendar`, corsMiddleware.apiCors, calendarRoutes);
+app.use(`${config.app.prefix}/users`, corsMiddleware.apiCors, userRoutes);
 
 // Default route
 app.get('/', (req, res) => {

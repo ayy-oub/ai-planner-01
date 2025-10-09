@@ -1,371 +1,279 @@
 // src/shared/services/notification.service.ts
-
 import { injectable, inject } from 'inversify';
 import { EmailService } from './email.service';
 import { CacheService } from './cache.service';
+import { firebaseManager } from '../config/firebase.config';   // <-- added
+import { getMessaging, Messaging, MulticastMessage } from 'firebase-admin/messaging';
 import logger from '../utils/logger';
 import { AppError } from '../utils/errors';
 
+/* ------------------------------------------------------------------ */
+/* Types                                                              */
+/* ------------------------------------------------------------------ */
 export interface NotificationPayload {
-    userId: string;
-    email?: string;
-    title: string;
-    message: string;
-    type: 'info' | 'warning' | 'error' | 'success';
-    data?: Record<string, any>;
-    priority: 'low' | 'medium' | 'high' | 'urgent';
-    channels: ('email' | 'push' | 'in-app' | 'sms')[];
-    scheduledFor?: Date;
+  userId: string;
+  email?: string;
+  title: string;
+  message: string;
+  type: 'info' | 'warning' | 'error' | 'success';
+  data?: Record<string, unknown>;
+  priority: 'low' | 'medium' | 'high' | 'urgent';
+  channels: ('email' | 'push' | 'in-app' | 'sms')[];
+  scheduledFor?: Date;
 }
 
 export interface NotificationPreferences {
-    email: boolean;
-    push: boolean;
-    inApp: boolean;
-    sms: boolean;
-    frequency: 'immediate' | 'daily' | 'weekly';
-    quietHours: {
-        enabled: boolean;
-        start: string; // HH:MM format
-        end: string;   // HH:MM format
-    };
+  email: boolean;
+  push: boolean;
+  inApp: boolean;
+  sms: boolean;
+  frequency: 'immediate' | 'daily' | 'weekly';
+  quietHours: {
+    enabled: boolean;
+    start: string; // HH:mm
+    end: string;
+  };
 }
 
+/* ------------------------------------------------------------------ */
+/* Service                                                            */
+/* ------------------------------------------------------------------ */
 @injectable()
 export class NotificationService {
-    constructor(
-        @inject(EmailService) private emailService: EmailService,
-        @inject(CacheService) private cacheService: CacheService
-    ) { }
+  private readonly messaging: Messaging;
 
-    async sendNotification(payload: NotificationPayload): Promise<void> {
-        try {
-            // Check if notification is scheduled for later
-            if (payload.scheduledFor && payload.scheduledFor > new Date()) {
-                await this.scheduleNotification(payload);
-                return;
-            }
+  constructor(
+    @inject(EmailService) private emailService: EmailService,
+    @inject(CacheService) private cacheService: CacheService
+  ) {
+    this.messaging = getMessaging(firebaseManager.getApp());
+  }
 
-            // Check user preferences
-            const preferences = await this.getUserPreferences(payload.userId);
+  /* ========================================================== */
+  /* Public API  (unchanged signatures)                         */
+  /* ========================================================== */
+  async sendNotification(payload: NotificationPayload): Promise<void> {
+    try {
+      if (payload.scheduledFor && payload.scheduledFor > new Date()) {
+        await this.scheduleNotification(payload);
+        return;
+      }
 
-            // Filter channels based on preferences
-            const enabledChannels = payload.channels.filter(channel =>
-                preferences[channel as keyof NotificationPreferences] === true
-            );
+      const prefs = await this.getUserPreferences(payload.userId);
+      const enabled = payload.channels.filter(ch => prefs[ch as keyof NotificationPreferences] === true);
 
-            // Check quiet hours
-            if (this.isInQuietHours(preferences)) {
-                if (payload.priority === 'low' || payload.priority === 'medium') {
-                    // Schedule for after quiet hours
-                    const resumeTime = this.getQuietHoursEndTime(preferences.quietHours);
-                    await this.scheduleNotification({ ...payload, scheduledFor: resumeTime });
-                    return;
-                }
-            }
+      if (this.isInQuietHours(prefs) && ['low', 'medium'].includes(payload.priority)) {
+        const resume = this.getQuietHoursEndTime(prefs.quietHours);
+        await this.scheduleNotification({ ...payload, scheduledFor: resume });
+        return;
+      }
 
-            // Send through enabled channels
-            const promises = enabledChannels.map(channel =>
-                this.sendThroughChannel(channel, payload)
-            );
+      await Promise.allSettled(enabled.map(ch => this.sendThroughChannel(ch, payload)));
 
-            await Promise.allSettled(promises);
+      if (enabled.includes('in-app')) await this.storeInAppNotification(payload);
 
-            // Store in-app notification
-            if (enabledChannels.includes('in-app')) {
-                await this.storeInAppNotification(payload);
-            }
-
-            logger.info(`Notification sent to user ${payload.userId} through channels: ${enabledChannels.join(', ')}`);
-        } catch (error) {
-            logger.error('Error sending notification:', error);
-            throw new AppError('Failed to send notification', 500);
-        }
+      logger.info(`Notification sent to user ${payload.userId} through channels: ${enabled.join(', ')}`);
+    } catch (err) {
+      logger.error('Error sending notification:', err);
+      throw new AppError('Failed to send notification', 500);
     }
+  }
 
-    async sendBulkNotifications(payloads: NotificationPayload[]): Promise<{ success: number; failed: number }> {
-        const results = { success: 0, failed: 0 };
-
-        // Process in batches of 50 to avoid overwhelming the system
-        const batchSize = 50;
-        for (let i = 0; i < payloads.length; i += batchSize) {
-            const batch = payloads.slice(i, i + batchSize);
-            const promises = batch.map(async (payload) => {
-                try {
-                    await this.sendNotification(payload);
-                    results.success++;
-                } catch (error) {
-                    results.failed++;
-                    logger.error('Error in bulk notification:', error);
-                }
-            });
-
-            await Promise.all(promises);
-        }
-
-        logger.info(`Bulk notification completed. Success: ${results.success}, Failed: ${results.failed}`);
-        return results;
+  async sendBulkNotifications(payloads: NotificationPayload[]): Promise<{ success: number; failed: number }> {
+    const res = { success: 0, failed: 0 };
+    const batch = 50;
+    for (let i = 0; i < payloads.length; i += batch) {
+      const slice = payloads.slice(i, i + batch);
+      await Promise.allSettled(slice.map(async p => {
+        try { await this.sendNotification(p); res.success++; }
+        catch { res.failed++; }
+      }));
     }
+    logger.info(`Bulk notification completed. Success: ${res.success}, Failed: ${res.failed}`);
+    return res;
+  }
 
-    async getUserNotifications(userId: string, limit: number = 50, offset: number = 0): Promise<{
-        notifications: any[];
-        total: number;
-        unread: number;
-    }> {
-        try {
-            const cacheKey = `notifications_${userId}_${limit}_${offset}`;
-            const cached = await this.cacheService.get(cacheKey);
+  async getUserNotifications(userId: string, limit = 50, offset = 0) {
+    const key = `notifications:${userId}:${limit}:${offset}`;
+    const cached = await this.cacheService.get(key);
+    if (cached) return cached;
 
-            if (cached) {
-                return cached;
-            }
+    // TODO: replace with DB call
+    const notifications = [
+      {
+        id: 'notif_1',
+        title: 'Welcome to AI Planner',
+        message: 'Your account has been created successfully.',
+        type: 'success',
+        priority: 'medium',
+        read: false,
+        createdAt: new Date().toISOString(),
+        data: {}
+      }
+    ];
 
-            // This would typically fetch from database
-            // For now, return mock data structure
-            const notifications = [
-                {
-                    id: 'notif_1',
-                    title: 'Welcome to AI Planner',
-                    message: 'Your account has been created successfully.',
-                    type: 'success',
-                    priority: 'medium',
-                    read: false,
-                    createdAt: new Date().toISOString(),
-                    data: {}
-                }
-            ];
+    const result = { notifications, total: notifications.length, unread: notifications.filter(n => !n.read).length };
+    await this.cacheService.set(key, result, {ttl: 300});
+    return result;
+  }
 
-            const result = {
-                notifications,
-                total: notifications.length,
-                unread: notifications.filter(n => !n.read).length
-            };
+  async markNotificationAsRead(userId: string, notificationId: string): Promise<void> {
+    logger.info(`Notification ${notificationId} marked as read for user ${userId}`);
+  }
 
-            // Cache for 5 minutes
-            await this.cacheService.set(cacheKey, result, 300);
+  async markAllNotificationsAsRead(userId: string): Promise<void> {
+    logger.info(`All notifications marked as read for user ${userId}`);
+  }
 
-            return result;
-        } catch (error) {
-            logger.error('Error fetching user notifications:', error);
-            throw new AppError('Failed to fetch notifications', 500);
-        }
+  async deleteNotification(userId: string, notificationId: string): Promise<void> {
+    logger.info(`Notification ${notificationId} deleted for user ${userId}`);
+  }
+
+  async updateUserPreferences(userId: string, delta: Partial<NotificationPreferences>): Promise<NotificationPreferences> {
+    const current = await this.getUserPreferences(userId);
+    const updated = { ...current, ...delta };
+    await this.cacheService.set(`prefs:${userId}`, updated, {ttl: 86_400});
+    logger.info(`Notification preferences updated for user ${userId}`);
+    return updated;
+  }
+
+  async getUserPreferences(userId: string): Promise<NotificationPreferences> {
+    const cached = await this.cacheService.get(`prefs:${userId}`) as NotificationPreferences | undefined;    if (cached) return cached;
+
+    const defaults: NotificationPreferences = {
+      email: true,
+      push: true,
+      inApp: true,
+      sms: false,
+      frequency: 'immediate',
+      quietHours: { enabled: false, start: '22:00', end: '08:00' }
+    };
+    await this.cacheService.set(`prefs:${userId}`, defaults, {ttl: 86_400});
+    return defaults;
+  }
+
+  /* ========================================================== */
+  /* Channel senders                                            */
+  /* ========================================================== */
+  private async sendThroughChannel(channel: string, payload: NotificationPayload): Promise<void> {
+    switch (channel) {
+      case 'email':
+        return this.sendEmailNotification(payload);
+      case 'push':
+        return this.sendPushNotification(payload);
+      case 'sms':
+        return this.sendSMSNotification(payload);
+      default:
+        logger.warn(`Unknown channel ${channel}`);
     }
+  }
 
-    async markNotificationAsRead(userId: string, notificationId: string): Promise<void> {
-        try {
-            // This would typically update in database
-            logger.info(`Notification ${notificationId} marked as read for user ${userId}`);
-        } catch (error) {
-            logger.error('Error marking notification as read:', error);
-            throw new AppError('Failed to mark notification as read', 500);
-        }
-    }
+  private async sendEmailNotification(p: NotificationPayload): Promise<void> {
+    if (!p.email) { logger.warn(`No email for user ${p.userId}`); return; }
+    await this.emailService.sendEmail({
+      to: p.email,
+      subject: p.title,
+      template: 'notification',
+      templateData: { title: p.title, message: p.message, type: p.type, ...p.data }
+    });
+  }
 
-    async markAllNotificationsAsRead(userId: string): Promise<void> {
-        try {
-            // This would typically update in database
-            logger.info(`All notifications marked as read for user ${userId}`);
-        } catch (error) {
-            logger.error('Error marking all notifications as read:', error);
-            throw new AppError('Failed to mark notifications as read', 500);
-        }
-    }
+  /* -------------- FCM PUSH  -------------------------------- */
+  private async sendPushNotification(p: NotificationPayload): Promise<void> {
+    const tokens = await this.getPushTokens(p.userId);
+    if (!tokens.length) { logger.info(`No push tokens for user ${p.userId}`); return; }
 
-    async deleteNotification(userId: string, notificationId: string): Promise<void> {
-        try {
-            // This would typically delete from database
-            logger.info(`Notification ${notificationId} deleted for user ${userId}`);
-        } catch (error) {
-            logger.error('Error deleting notification:', error);
-            throw new AppError('Failed to delete notification', 500);
-        }
-    }
+    const msg: MulticastMessage = {
+      tokens,
+      notification: { title: p.title, body: p.message },
+      data: p.data ? this.toStringMap(p.data) : undefined,
+      android: { priority: p.priority === 'urgent' ? 'high' : 'normal' },
+      apns: { headers: { 'apns-priority': p.priority === 'urgent' ? '10' : '5' } }
+    };
 
-    async updateUserPreferences(userId: string, preferences: Partial<NotificationPreferences>): Promise<NotificationPreferences> {
-        try {
-            const currentPrefs = await this.getUserPreferences(userId);
-            const updatedPrefs = { ...currentPrefs, ...preferences };
+    const res = await this.messaging.sendEachForMulticast(msg);
 
-            await this.cacheService.set(`user_prefs_${userId}`, updatedPrefs, 86400); // 24 hours
-            logger.info(`Notification preferences updated for user ${userId}`);
+    logger.info(`Push sent ${res.successCount}/${tokens.length} to user ${p.userId}`);
 
-            return updatedPrefs;
-        } catch (error) {
-            logger.error('Error updating user preferences:', error);
-            throw new AppError('Failed to update preferences', 500);
-        }
-    }
+    // remove invalid / unregistered tokens
+    res.responses.forEach((r, i) => {
+      if (r.error?.code === 'messaging/invalid-registration-token' ||
+          r.error?.code === 'messaging/registration-token-not-registered') {
+        this.removePushToken(tokens[i]).catch(() => {/* ignore */});
+      }
+    });
+  }
 
-    async getUserPreferences(userId: string): Promise<NotificationPreferences> {
-        try {
-            const cached = await this.cacheService.get(`user_prefs_${userId}`);
-            if (cached) {
-                return cached;
-            }
+  private async sendSMSNotification(p: NotificationPayload): Promise<void> {
+    logger.info(`SMS notification would be sent to user ${p.userId}: ${p.title}`);
+  }
 
-            // Default preferences
-            const defaultPrefs: NotificationPreferences = {
-                email: true,
-                push: true,
-                inApp: true,
-                sms: false,
-                frequency: 'immediate',
-                quietHours: {
-                    enabled: false,
-                    start: '22:00',
-                    end: '08:00'
-                }
-            };
+  /* ========================================================== */
+  /* Token CRUD  (Firestore)                                   */
+  /* ========================================================== */
+  private async getPushTokens(userId: string): Promise<string[]> {
+    const snap = await firebaseManager.getFirestore()
+      .collection('user_push_tokens')
+      .where('userId', '==', userId)
+      .get();
+    return snap.docs.map(d => d.data().token);
+  }
 
-            // In a real implementation, this would fetch from database
-            await this.cacheService.set(`user_prefs_${userId}`, defaultPrefs, 86400);
-            return defaultPrefs;
-        } catch (error) {
-            logger.error('Error fetching user preferences:', error);
-            return {
-                email: true,
-                push: true,
-                inApp: true,
-                sms: false,
-                frequency: 'immediate',
-                quietHours: {
-                    enabled: false,
-                    start: '22:00',
-                    end: '08:00'
-                }
-            };
-        }
-    }
+  private async removePushToken(token: string): Promise<void> {
+    const hash = this.hash(token);
+    await firebaseManager.getFirestore()
+      .collection('user_push_tokens')
+      .doc(hash)
+      .delete();
+  }
 
-    private async sendThroughChannel(channel: string, payload: NotificationPayload): Promise<void> {
-        switch (channel) {
-            case 'email':
-                await this.sendEmailNotification(payload);
-                break;
-            case 'push':
-                await this.sendPushNotification(payload);
-                break;
-            case 'sms':
-                await this.sendSMSNotification(payload);
-                break;
-            default:
-                logger.warn(`Unknown notification channel: ${channel}`);
-        }
-    }
+  /* ========================================================== */
+  /* Helpers                                                    */
+  /* ========================================================== */
+  private readonly hash = (s: string): string =>
+    require('crypto').createHash('sha256').update(s).digest('hex');
 
-    private async sendEmailNotification(payload: NotificationPayload): Promise<void> {
-        if (!payload.email) {
-            logger.warn(`No email provided for user ${payload.userId}`);
-            return;
-        }
+  private toStringMap(obj: Record<string, unknown>): Record<string, string> {
+    return Object.fromEntries(Object.entries(obj).map(([k, v]) => [k, String(v)]));
+  }
 
-        try {
-            await this.emailService.sendEmail({
-                to: payload.email,
-                subject: payload.title,
-                template: 'notification',
-                data: {
-                    title: payload.title,
-                    message: payload.message,
-                    type: payload.type,
-                    ...payload.data
-                }
-            });
-        } catch (error) {
-            logger.error('Error sending email notification:', error);
-            throw error;
-        }
-    }
+  private isInQuietHours(p: NotificationPreferences): boolean {
+    if (!p.quietHours.enabled) return false;
+    const now = new Date();
+    const cur = `${now.getHours().toString().padStart(2, '0')}:${now.getMinutes().toString().padStart(2, '0')}`;
+    const { start, end } = p.quietHours;
+    return start < end ? (cur >= start && cur < end) : (cur >= start || cur < end);
+  }
 
-    private async sendPushNotification(payload: NotificationPayload): Promise<void> {
-        // This would integrate with a push notification service like Firebase Cloud Messaging
-        logger.info(`Push notification would be sent to user ${payload.userId}: ${payload.title}`);
-    }
+  private getQuietHoursEndTime(qh: { start: string; end: string }): Date {
+    const [h, m] = qh.end.split(':').map(Number);
+    const d = new Date();
+    d.setHours(h, m, 0, 0);
+    if (d <= new Date()) d.setDate(d.getDate() + 1);
+    return d;
+  }
 
-    private async sendSMSNotification(payload: NotificationPayload): Promise<void> {
-        // This would integrate with an SMS service like Twilio
-        logger.info(`SMS notification would be sent to user ${payload.userId}: ${payload.title}`);
-    }
+  private async storeInAppNotification(p: NotificationPayload): Promise<void> {
+    const notif = {
+      id: `notif_${Date.now()}_${Math.random().toString(36).slice(2, 11)}`,
+      userId: p.userId,
+      title: p.title,
+      message: p.message,
+      type: p.type,
+      priority: p.priority,
+      data: p.data ?? {},
+      read: false,
+      createdAt: new Date().toISOString()
+    };
+    // TODO: persist to DB
+    await this.cacheService.delete(`notifications:${p.userId}:*:*`); // invalidate list caches
+    logger.info(`In-app notification stored for user ${p.userId}`);
+  }
 
-    private async storeInAppNotification(payload: NotificationPayload): Promise<void> {
-        try {
-            // This would typically store in database
-            const notification = {
-                id: `notif_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
-                userId: payload.userId,
-                title: payload.title,
-                message: payload.message,
-                type: payload.type,
-                priority: payload.priority,
-                data: payload.data || {},
-                read: false,
-                createdAt: new Date().toISOString()
-            };
-
-            // Invalidate user's notification cache
-            await this.cacheService.del(`notifications_${payload.userId}_*`);
-
-            logger.info(`In-app notification stored for user ${payload.userId}`);
-        } catch (error) {
-            logger.error('Error storing in-app notification:', error);
-        }
-    }
-
-    private async scheduleNotification(payload: NotificationPayload): Promise<void> {
-        try {
-            // Store scheduled notification
-            const scheduledNotif = {
-                ...payload,
-                id: `scheduled_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
-                status: 'scheduled'
-            };
-
-            // In a real implementation, this would use a job queue like BullMQ
-            // For now, we'll just log it
-            logger.info(`Notification scheduled for ${payload.scheduledFor?.toISOString()} for user ${payload.userId}`);
-
-            // Simulate scheduled execution (in production, use a proper job scheduler)
-            const delay = payload.scheduledFor!.getTime() - Date.now();
-            if (delay > 0 && delay < 86400000) { // Only schedule if within 24 hours
-                setTimeout(() => {
-                    this.sendNotification({ ...payload, scheduledFor: undefined })
-                        .catch(error => logger.error('Error sending scheduled notification:', error));
-                }, delay);
-            }
-        } catch (error) {
-            logger.error('Error scheduling notification:', error);
-        }
-    }
-
-    private isInQuietHours(preferences: NotificationPreferences): boolean {
-        if (!preferences.quietHours.enabled) {
-            return false;
-        }
-
-        const now = new Date();
-        const currentTime = now.getHours().toString().padStart(2, '0') + ':' + now.getMinutes().toString().padStart(2, '0');
-        const { start, end } = preferences.quietHours;
-
-        if (start < end) {
-            return currentTime >= start && currentTime < end;
-        } else {
-            // Quiet hours span midnight
-            return currentTime >= start || currentTime < end;
-        }
-    }
-
-    private getQuietHoursEndTime(quietHours: { start: string; end: string }): Date {
-        const now = new Date();
-        const [endHour, endMinute] = quietHours.end.split(':').map(Number);
-
-        const endTime = new Date(now);
-        endTime.setHours(endHour, endMinute, 0, 0);
-
-        // If end time has already passed today, set it for tomorrow
-        if (endTime <= now) {
-            endTime.setDate(endTime.getDate() + 1);
-        }
-
-        return endTime;
-    }
+  private async scheduleNotification(p: NotificationPayload): Promise<void> {
+    const delay = p.scheduledFor!.getTime() - Date.now();
+    if (delay <= 0 || delay > 86400000) return; // ignore > 24 h
+    setTimeout(() => this.sendNotification({ ...p, scheduledFor: undefined }), delay);
+    logger.info(`Notification scheduled for ${p.scheduledFor!.toISOString()} (delay ${delay} ms)`);
+  }
 }

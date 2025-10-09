@@ -1,7 +1,7 @@
 import { Request, Response, NextFunction } from 'express';
 import { validationResult, ValidationChain } from 'express-validator';
-import { AppError, ValidationError, ErrorCodes } from '@shared/utils/errors';
-import { Logger } from '@shared/utils/logger';
+import { AppError, ValidationError, ErrorCode } from '../utils/errors';
+import { logger } from '../utils/logger';
 
 export const validate = (validations: ValidationChain[]) => {
     return async (req: Request, res: Response, next: NextFunction) => {
@@ -21,8 +21,8 @@ export const validate = (validations: ValidationChain[]) => {
 
             next();
         } catch (error) {
-            Logger.error('Validation middleware error', error);
-            next(new AppError('Validation check failed', 500, undefined, ErrorCodes.VALIDATION_ERROR));
+            logger.error('Validation middleware error', error);
+            next(new AppError('Validation check failed', 500, undefined, ErrorCode.VALIDATION_ERROR));
         }
     };
 };
@@ -36,14 +36,15 @@ export const validateBody = (requiredFields: string[]) => {
                 return next(new AppError(
                     `Missing required fields: ${missingFields.join(', ')}`,
                     400,
+                    undefined,
                     missingFields.map(field => ({ field, message: 'This field is required' }))
                 ));
             }
 
             next();
         } catch (error) {
-            Logger.error('Body validation middleware error', error);
-            next(new AppError('Body validation failed', 500, undefined, ErrorCodes.VALIDATION_ERROR));
+            logger.error('Body validation middleware error', error);
+            next(new AppError('Body validation failed', 500, undefined, ErrorCode.VALIDATION_ERROR));
         }
     };
 };
@@ -57,14 +58,15 @@ export const validateQuery = (allowedFields: string[]) => {
                 return next(new AppError(
                     `Invalid query parameters: ${invalidFields.join(', ')}`,
                     400,
+                    undefined,
                     invalidFields.map(field => ({ field, message: 'This field is not allowed' }))
                 ));
             }
 
             next();
         } catch (error) {
-            Logger.error('Query validation middleware error', error);
-            next(new AppError('Query validation failed', 500, undefined, ErrorCodes.VALIDATION_ERROR));
+            logger.error('Query validation middleware error', error);
+            next(new AppError('Query validation failed', 500, undefined, ErrorCode.VALIDATION_ERROR));
         }
     };
 };
@@ -78,14 +80,15 @@ export const validateParams = (requiredParams: string[]) => {
                 return next(new AppError(
                     `Missing required parameters: ${missingParams.join(', ')}`,
                     400,
+                    undefined,
                     missingParams.map(param => ({ param, message: 'This parameter is required' }))
                 ));
             }
 
             next();
         } catch (error) {
-            Logger.error('Params validation middleware error', error);
-            next(new AppError('Params validation failed', 500, undefined, ErrorCodes.VALIDATION_ERROR));
+            logger.error('Params validation middleware error', error);
+            next(new AppError('Params validation failed', 500, undefined, ErrorCode.VALIDATION_ERROR));
         }
     };
 };
@@ -96,7 +99,7 @@ export const isStrongPassword = (value: string) => {
         const strongPasswordRegex = /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[@$!%*?&])[A-Za-z\d@$!%*?&]{8,}$/;
         return strongPasswordRegex.test(value);
     } catch (error) {
-        Logger.error('Strong password validation error', error);
+        logger.error('Strong password validation error', error);
         return false;
     }
 };
@@ -106,7 +109,7 @@ export const isValidEmail = (value: string) => {
         const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
         return emailRegex.test(value);
     } catch (error) {
-        Logger.error('Email validation error', error);
+        logger.error('Email validation error', error);
         return false;
     }
 };
@@ -120,7 +123,7 @@ export const sanitizeInput = (input: string): string => {
             .replace(/on\w+\s*=/gi, '') // Remove event handlers
             .trim();
     } catch (error) {
-        Logger.error('Input sanitization error', error);
+        logger.error('Input sanitization error', error);
         return '';
     }
 };
@@ -129,7 +132,8 @@ export const sanitizeInput = (input: string): string => {
 export const validateRateLimit = (maxRequests: number, windowMs: number) => {
     return async (req: Request, res: Response, next: NextFunction) => {
         try {
-            const cacheService = (await import('@shared/services/cache.service')).cacheService;
+            const { CacheService } = await import('../services/cache.service.js');
+            const cacheService = new CacheService();
             const key = `rate_limit:${req.ip}:${req.route?.path || req.path}`;
 
             const current = await cacheService.increment(key);
@@ -144,7 +148,7 @@ export const validateRateLimit = (maxRequests: number, windowMs: number) => {
 
             next();
         } catch (error) {
-            Logger.error('Rate limit validation error', error);
+            logger.error('Rate limit validation error', error);
             // Fail open - allow request if rate limiting fails
             next();
         }
@@ -156,7 +160,7 @@ export const validateFileUpload = (allowedTypes: string[], maxSize: number) => {
     return (req: Request, res: Response, next: NextFunction) => {
         try {
             if (!req.file) {
-                return next(new AppError('No file uploaded', 400, undefined, ErrorCodes.INVALID_INPUT));
+                return next(new AppError('No file uploaded', 400, undefined, ErrorCode.INVALID_INPUT));
             }
 
             const { mimetype, size } = req.file;
@@ -166,7 +170,7 @@ export const validateFileUpload = (allowedTypes: string[], maxSize: number) => {
                     `Invalid file type. Allowed types: ${allowedTypes.join(', ')}`,
                     400,
                     undefined,
-                    ErrorCodes.INVALID_FILE_TYPE
+                    ErrorCode.INVALID_FILE_TYPE
                 ));
             }
 
@@ -175,14 +179,14 @@ export const validateFileUpload = (allowedTypes: string[], maxSize: number) => {
                     `File too large. Maximum size: ${maxSize / 1024 / 1024}MB`,
                     400,
                     undefined,
-                    ErrorCodes.FILE_TOO_LARGE
+                    ErrorCode.FILE_TOO_LARGE
                 ));
             }
 
             next();
         } catch (error) {
-            Logger.error('File upload validation error', error);
-            next(new AppError('File validation failed', 500, undefined, ErrorCodes.FILE_UPLOAD_ERROR));
+            logger.error('File upload validation error', error);
+            next(new AppError('File validation failed', 500, undefined, ErrorCode.FILE_UPLOAD_ERROR));
         }
     };
 };
@@ -194,11 +198,11 @@ export const validatePagination = (req: Request, res: Response, next: NextFuncti
         const limit = parseInt(req.query.limit as string) || 10;
 
         if (page < 1) {
-            return next(new AppError('Page must be greater than 0', 400, undefined, ErrorCodes.INVALID_INPUT));
+            return next(new AppError('Page must be greater than 0', 400, undefined, ErrorCode.INVALID_INPUT));
         }
 
         if (limit < 1 || limit > 100) {
-            return next(new AppError('Limit must be between 1 and 100', 400, undefined, ErrorCodes.INVALID_INPUT));
+            return next(new AppError('Limit must be between 1 and 100', 400, undefined, ErrorCode.INVALID_INPUT));
         }
 
         // Set validated values on request
@@ -206,8 +210,8 @@ export const validatePagination = (req: Request, res: Response, next: NextFuncti
 
         next();
     } catch (error) {
-        Logger.error('Pagination validation error', error);
-        next(new AppError('Pagination validation failed', 500, undefined, ErrorCodes.VALIDATION_ERROR));
+        logger.error('Pagination validation error', error);
+        next(new AppError('Pagination validation failed', 500, undefined, ErrorCode.VALIDATION_ERROR));
     }
 };
 
@@ -223,7 +227,7 @@ export const validateSort = (allowedFields: string[]) => {
                     `Invalid sort field. Allowed fields: ${allowedFields.join(', ')}`,
                     400,
                     undefined,
-                    ErrorCodes.INVALID_INPUT
+                    ErrorCode.INVALID_INPUT
                 ));
             }
 
@@ -232,7 +236,7 @@ export const validateSort = (allowedFields: string[]) => {
                     'Invalid sort order. Must be asc or desc',
                     400,
                     undefined,
-                    ErrorCodes.INVALID_INPUT
+                    ErrorCode.INVALID_INPUT
                 ));
             }
 
@@ -244,8 +248,8 @@ export const validateSort = (allowedFields: string[]) => {
 
             next();
         } catch (error) {
-            Logger.error('Sort validation error', error);
-            next(new AppError('Sort validation failed', 500, undefined, ErrorCodes.VALIDATION_ERROR));
+            logger.error('Sort validation error', error);
+            next(new AppError('Sort validation failed', 500, undefined, ErrorCode.VALIDATION_ERROR));
         }
     };
 };
@@ -260,7 +264,7 @@ export const validateSearch = (req: Request, res: Response, next: NextFunction) 
                 'Search term must be at least 2 characters long',
                 400,
                 undefined,
-                ErrorCodes.INVALID_INPUT
+                ErrorCode.INVALID_INPUT
             ));
         }
 
@@ -269,7 +273,7 @@ export const validateSearch = (req: Request, res: Response, next: NextFunction) 
                 'Search term must be less than 100 characters long',
                 400,
                 undefined,
-                ErrorCodes.INVALID_INPUT
+                ErrorCode.INVALID_INPUT
             ));
         }
 
@@ -280,8 +284,8 @@ export const validateSearch = (req: Request, res: Response, next: NextFunction) 
 
         next();
     } catch (error) {
-        Logger.error('Search validation error', error);
-        next(new AppError('Search validation failed', 500, undefined, ErrorCodes.VALIDATION_ERROR));
+        logger.error('Search validation error', error);
+        next(new AppError('Search validation failed', 500, undefined, ErrorCode.VALIDATION_ERROR));
     }
 };
 
@@ -292,15 +296,15 @@ export const validateDateRange = (req: Request, res: Response, next: NextFunctio
         const endDate = req.query.endDate as string;
 
         if (startDate && isNaN(Date.parse(startDate))) {
-            return next(new AppError('Invalid start date format', 400, undefined, ErrorCodes.INVALID_INPUT));
+            return next(new AppError('Invalid start date format', 400, undefined, ErrorCode.INVALID_INPUT));
         }
 
         if (endDate && isNaN(Date.parse(endDate))) {
-            return next(new AppError('Invalid end date format', 400, undefined, ErrorCodes.INVALID_INPUT));
+            return next(new AppError('Invalid end date format', 400, undefined, ErrorCode.INVALID_INPUT));
         }
 
         if (startDate && endDate && new Date(startDate) > new Date(endDate)) {
-            return next(new AppError('Start date must be before end date', 400, undefined, ErrorCodes.INVALID_INPUT));
+            return next(new AppError('Start date must be before end date', 400, undefined, ErrorCode.INVALID_INPUT));
         }
 
         // Set validated values on request
@@ -311,8 +315,8 @@ export const validateDateRange = (req: Request, res: Response, next: NextFunctio
 
         next();
     } catch (error) {
-        Logger.error('Date range validation error', error);
-        next(new AppError('Date range validation failed', 500, undefined, ErrorCodes.VALIDATION_ERROR));
+        logger.error('Date range validation error', error);
+        next(new AppError('Date range validation failed', 500, undefined, ErrorCode.VALIDATION_ERROR));
     }
 };
 

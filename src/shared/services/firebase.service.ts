@@ -1,4 +1,5 @@
 import * as admin from 'firebase-admin';
+import { UploadOptions, UploadResponse, File, GetSignedUrlConfig, FileMetadata } from '@google-cloud/storage';
 import { config } from '../config';
 import { logger } from '../utils/logger';
 import { AppError } from '../utils/errors';
@@ -19,10 +20,11 @@ export interface FirebaseServiceConfig {
  */
 export class FirebaseService {
     private static instance: FirebaseService;
-    private app: admin.app.App;
-    private firestore: admin.firestore.Firestore;
-    private auth: admin.auth.Auth;
-    private storage: admin.storage.Storage;
+    private firestore!: admin.firestore.Firestore;
+    private auth!: admin.auth.Auth;
+    private storage!: admin.storage.Storage;
+    private app!: admin.app.App;
+
     private initialized = false;
 
     private constructor() {
@@ -37,6 +39,18 @@ export class FirebaseService {
             FirebaseService.instance = new FirebaseService();
         }
         return FirebaseService.instance;
+    }
+
+    get db(): admin.firestore.Firestore {
+        return this.firestore;
+    }
+    
+    get authInstance(): admin.auth.Auth {
+        return this.auth;
+    }
+    
+    get storageInstance(): admin.storage.Storage {
+        return this.storage;
     }
 
     /**
@@ -77,7 +91,7 @@ export class FirebaseService {
             this.setupFirestore();
             this.setupAuth();
 
-        } catch (error) {
+        } catch (error: undefined | any) {
             logger.error('Failed to initialize Firebase', { error: error.message });
             throw new AppError(`Failed to initialize Firebase: ${error.message}`, 500, 'FIREBASE_INIT_ERROR');
         }
@@ -100,7 +114,7 @@ export class FirebaseService {
             } as any);
 
             logger.info('Firestore configured');
-        } catch (error) {
+        } catch (error: undefined | any) {
             logger.error('Failed to setup Firestore', { error: error.message });
         }
     }
@@ -112,7 +126,7 @@ export class FirebaseService {
         try {
             // Configure auth settings if needed
             logger.info('Auth configured');
-        } catch (error) {
+        } catch (error: undefined | any) {
             logger.error('Failed to setup Auth', { error: error.message });
         }
     }
@@ -246,6 +260,34 @@ export class FirebaseService {
     }
 
     /**
+     * Get user by UID or throw error if not found
+     */
+    public async getUser(uid: string): Promise<admin.auth.UserRecord> {
+        const user = await this.getUserByUid(uid);
+        if (!user) {
+            throw new AppError('User not found', 404, 'FIREBASE_USER_NOT_FOUND');
+        }
+        return user;
+    }
+
+    /**
+     * Check if user has a specific permission (via custom claims)
+     */
+    public async checkUserPermission(uid: string, permission: string): Promise<boolean> {
+        try {
+            const user = await this.getAuth().getUser(uid);
+            const claims = user.customClaims || {};
+            const permissions: string[] = claims.permissions || [];
+
+            return permissions.includes(permission);
+        } catch (error: any) {
+            logger.error('Error checking user permissions', { uid, error: error.message });
+            return false;
+        }
+    }
+
+
+    /**
      * Create new user
      */
     async createUser(userData: {
@@ -360,8 +402,8 @@ export class FirebaseService {
     async uploadFile(
         filePath: string,
         destination: string,
-        metadata?: admin.storage.UploadMetadata
-    ): Promise<admin.storage.UploadResponse> {
+        metadata?: UploadOptions
+    ): Promise<UploadResponse> {
         try {
             const bucket = this.storage.bucket();
             const uploadResponse = await bucket.upload(filePath, {
@@ -383,8 +425,8 @@ export class FirebaseService {
     async uploadBuffer(
         buffer: Buffer,
         destination: string,
-        metadata?: admin.storage.UploadMetadata
-    ): Promise<admin.storage.UploadResponse> {
+        metadata?: UploadOptions
+    ): Promise<[unknown, File]> {
         try {
             const bucket = this.storage.bucket();
             const file = bucket.file(destination);
@@ -436,7 +478,7 @@ export class FirebaseService {
     /**
      * Get file metadata
      */
-    async getFileMetadata(filePath: string): Promise<admin.storage.FileMetadata> {
+    async getFileMetadata(filePath: string): Promise<FileMetadata> {
         try {
             const bucket = this.storage.bucket();
             const [metadata] = await bucket.file(filePath).getMetadata();
@@ -455,12 +497,14 @@ export class FirebaseService {
     async generateSignedUrl(
         filePath: string,
         expires: Date,
-        options?: admin.storage.GetSignedUrlConfig
+        action: 'read' | 'write' | 'delete' | 'resumable',
+        options?: Omit<GetSignedUrlConfig, 'expires' | 'action'>
     ): Promise<string> {
         try {
             const bucket = this.storage.bucket();
             const [url] = await bucket.file(filePath).getSignedUrl({
                 expires,
+                action,
                 ...options,
             });
 
@@ -540,25 +584,29 @@ export class FirebaseService {
     }> {
         const start = Date.now();
 
+        let firestoreHealthy = false;
+        let authHealthy = false;
+        let storageHealthy = false;
+
         try {
             // Test Firestore
             await this.firestore.collection('_health').limit(1).get();
-            const firestoreHealthy = true;
+            firestoreHealthy = true;
 
             // Test Auth
             try {
                 await this.auth.listUsers(1);
-                const authHealthy = true;
+                authHealthy = true;
             } catch (error) {
-                const authHealthy = false;
+                authHealthy = false;
             }
 
             // Test Storage
             try {
                 await this.storage.bucket().getMetadata();
-                const storageHealthy = true;
+                storageHealthy = true;
             } catch (error) {
-                const storageHealthy = false;
+                storageHealthy = false;
             }
 
             const latency = Date.now() - start;
@@ -585,6 +633,7 @@ export class FirebaseService {
             };
         }
     }
+
 
     /**
      * Disconnect Firebase
@@ -625,7 +674,9 @@ export const firebaseUtils = {
      * Convert Firestore query snapshot to array of objects
      */
     querySnapshotToArray<T>(snapshot: admin.firestore.QuerySnapshot): T[] {
-        return snapshot.docs.map(doc => firebaseUtils.docToObject(doc)!).filter(Boolean);
+        return snapshot.docs
+            .map(doc => firebaseUtils.docToObject(doc) as T | undefined)
+            .filter((item): item is T => Boolean(item));
     },
 
     /**
@@ -645,8 +696,8 @@ export const firebaseUtils = {
     /**
      * Create Firestore Blob
      */
-    createBlob(data: Uint8Array): admin.firestore.Blob {
-        return admin.firestore.Blob.fromUint8Array(data);
+    createBlob(data: Uint8Array): Buffer {
+        return Buffer.from(data);
     },
 
     /**
@@ -678,10 +729,4 @@ export const firebaseUtils = {
         }
         return `${collection}/${documentId}`;
     },
-};
-
-export {
-    FirebaseService,
-    FirebaseServiceConfig,
-    firebaseUtils,
 };

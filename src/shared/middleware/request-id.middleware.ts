@@ -1,7 +1,6 @@
 import { Request, Response, NextFunction } from 'express';
-import { v4 as uuidv4 } from 'uuid';
 import { logger } from '../utils/logger';
-
+const { v4: uuidv4 } = require('uuid');
 /**
  * Request ID middleware configuration
  */

@@ -1,8 +1,7 @@
-import { Redis } from 'ioredis';
+import Redis, { ChainableCommander } from 'ioredis';
 import { config } from '../config';
 import { logger } from '../utils/logger';
-import { AppError, CacheError } from '../utils/errors';
-import { promisify } from 'util';
+import { CacheError } from '../utils/errors';
 import { gzip, ungzip } from 'node-gzip';
 
 /**
@@ -51,25 +50,32 @@ export class CacheService {
             port: config.redis.port,
             password: config.redis.password,
             db: config.redis.db,
-            retryDelayOnFailover: 100,
             maxRetriesPerRequest: 3,
             enableOfflineQueue: false,
             connectTimeout: 10000,
             commandTimeout: 5000,
             family: 4,
-            keepAlive: true,
+            keepAlive: 30000,
             noDelay: true,
             tls: config.redis.tls ? {} : undefined,
+            retryStrategy(times) {
+                // delay reconnect by 100ms * number of attempts
+                return Math.min(times * 100, 2000);
+            }
         });
 
         this.setupEventHandlers();
+    }
+
+    getClient(): Redis {
+        return this.redis;
     }
 
     /**
      * Setup Redis event handlers
      */
     private setupEventHandlers(): void {
-        this.redis.on('error', (error) => {
+        this.redis.on('error', (error: any) => {
             logger.error('Redis connection error', { error: error.message, domain: 'cache' });
         });
 
@@ -114,7 +120,7 @@ export class CacheService {
         if (options.json !== false) {
             try {
                 return JSON.parse(value);
-            } catch (error) {
+            } catch (error: any) {
                 logger.error('Failed to deserialize cache value', { error: error.message, value });
                 return null;
             }
@@ -131,7 +137,7 @@ export class CacheService {
             try {
                 const compressed = await gzip(Buffer.from(value));
                 return `__COMPRESSED__${compressed.toString('base64')}`;
-            } catch (error) {
+            } catch (error: any) {
                 logger.warn('Compression failed, storing uncompressed', { error: error.message });
                 return value;
             }
@@ -148,7 +154,7 @@ export class CacheService {
                 const compressed = Buffer.from(value.replace('__COMPRESSED__', ''), 'base64');
                 const decompressed = await ungzip(compressed);
                 return decompressed.toString();
-            } catch (error) {
+            } catch (error: any) {
                 logger.error('Decompression failed', { error: error.message });
                 throw new CacheError('Failed to decompress cache value');
             }
@@ -172,7 +178,7 @@ export class CacheService {
 
             this.stats.sets++;
             logger.debug('Cache set', { key, ttl: options.ttl, compressed: options.compress });
-        } catch (error) {
+        } catch (error: any) {
             logger.error('Cache set error', { error: error.message, key });
             throw new CacheError(`Failed to set cache value: ${error.message}`);
         }
@@ -196,7 +202,7 @@ export class CacheService {
 
             const decompressed = await this.decompressIfNeeded(value, options);
             return this.deserialize(decompressed, options);
-        } catch (error) {
+        } catch (error: any) {
             logger.error('Cache get error', { error: error.message, key });
             throw new CacheError(`Failed to get cache value: ${error.message}`);
         }
@@ -227,7 +233,7 @@ export class CacheService {
 
             logger.debug('Cache getMany', { keys: keys.length, hits: results.size });
             return results;
-        } catch (error) {
+        } catch (error: any) {
             logger.error('Cache getMany error', { error: error.message, keys });
             throw new CacheError(`Failed to get multiple cache values: ${error.message}`);
         }
@@ -259,10 +265,51 @@ export class CacheService {
             this.stats.sets += entries.length;
 
             logger.debug('Cache setMany', { count: entries.length });
-        } catch (error) {
+        } catch (error: any) {
             logger.error('Cache setMany error', { error: error.message, count: entries.length });
             throw new CacheError(`Failed to set multiple cache values: ${error.message}`);
         }
+    }
+
+    /**
+   * Get cache memory usage (in bytes)
+   * Returns approximate total Redis memory used, not just cache keys.
+   */
+    async size(): Promise<number> {
+        try {
+            const info = await this.redis.info('memory');
+
+            // Try parsing "used_memory_dataset" first (actual data memory)
+            const datasetMatch = info.match(/used_memory_dataset:(\d+)/);
+            const usedMemoryMatch = info.match(/used_memory:(\d+)/);
+
+            const bytes = datasetMatch
+                ? parseInt(datasetMatch[1], 10)
+                : usedMemoryMatch
+                    ? parseInt(usedMemoryMatch[1], 10)
+                    : 0;
+
+            logger.debug('Cache memory usage retrieved', {
+                usedMemory: bytes,
+                unit: 'bytes',
+            });
+
+            return bytes;
+        } catch (err: any) {
+            logger.error('Cache size retrieval failed', {
+                error: err?.message ?? String(err),
+                domain: 'cache',
+            });
+            throw new CacheError(`Failed to get Redis memory usage: ${err?.message ?? String(err)}`);
+        }
+    }
+
+    /**
+     * Get cache memory usage in MB (helper)
+     */
+    async sizeInMB(): Promise<number> {
+        const bytes = await this.size();
+        return +(bytes / (1024 * 1024)).toFixed(2);
     }
 
     /**
@@ -275,7 +322,7 @@ export class CacheService {
 
             logger.debug('Cache delete', { key, result: result > 0 });
             return result > 0;
-        } catch (error) {
+        } catch (error: any) {
             logger.error('Cache delete error', { error: error.message, key });
             throw new CacheError(`Failed to delete cache value: ${error.message}`);
         }
@@ -295,7 +342,7 @@ export class CacheService {
 
             logger.debug('Cache deleteMany', { keys: keys.length, deleted: result });
             return result;
-        } catch (error) {
+        } catch (error: any) {
             logger.error('Cache deleteMany error', { error: error.message, keys });
             throw new CacheError(`Failed to delete multiple cache values: ${error.message}`);
         }
@@ -308,7 +355,7 @@ export class CacheService {
         try {
             const result = await this.redis.exists(key);
             return result === 1;
-        } catch (error) {
+        } catch (error: any) {
             logger.error('Cache exists error', { error: error.message, key });
             throw new CacheError(`Failed to check cache key existence: ${error.message}`);
         }
@@ -321,7 +368,7 @@ export class CacheService {
         try {
             const result = await this.redis.expire(key, ttl);
             return result === 1;
-        } catch (error) {
+        } catch (error: any) {
             logger.error('Cache expire error', { error: error.message, key });
             throw new CacheError(`Failed to set cache key TTL: ${error.message}`);
         }
@@ -333,7 +380,7 @@ export class CacheService {
     async ttl(key: string): Promise<number> {
         try {
             return await this.redis.ttl(key);
-        } catch (error) {
+        } catch (error: any) {
             logger.error('Cache TTL error', { error: error.message, key });
             throw new CacheError(`Failed to get cache key TTL: ${error.message}`);
         }
@@ -347,7 +394,7 @@ export class CacheService {
             const result = await this.redis.incrby(key, amount);
             logger.debug('Cache increment', { key, amount, result });
             return result;
-        } catch (error) {
+        } catch (error: any) {
             logger.error('Cache increment error', { error: error.message, key });
             throw new CacheError(`Failed to increment cache value: ${error.message}`);
         }
@@ -361,7 +408,7 @@ export class CacheService {
             const result = await this.redis.decrby(key, amount);
             logger.debug('Cache decrement', { key, amount, result });
             return result;
-        } catch (error) {
+        } catch (error: any) {
             logger.error('Cache decrement error', { error: error.message, key });
             throw new CacheError(`Failed to decrement cache value: ${error.message}`);
         }
@@ -375,7 +422,7 @@ export class CacheService {
             const result = await this.redis.sadd(key, ...members);
             logger.debug('Cache sadd', { key, members: members.length, result });
             return result;
-        } catch (error) {
+        } catch (error: any) {
             logger.error('Cache sadd error', { error: error.message, key });
             throw new CacheError(`Failed to add to set: ${error.message}`);
         }
@@ -389,7 +436,7 @@ export class CacheService {
             const result = await this.redis.srem(key, ...members);
             logger.debug('Cache srem', { key, members: members.length, result });
             return result;
-        } catch (error) {
+        } catch (error: any) {
             logger.error('Cache srem error', { error: error.message, key });
             throw new CacheError(`Failed to remove from set: ${error.message}`);
         }
@@ -403,7 +450,7 @@ export class CacheService {
             const result = await this.redis.smembers(key);
             logger.debug('Cache smembers', { key, count: result.length });
             return result;
-        } catch (error) {
+        } catch (error: any) {
             logger.error('Cache smembers error', { error: error.message, key });
             throw new CacheError(`Failed to get set members: ${error.message}`);
         }
@@ -416,7 +463,7 @@ export class CacheService {
         try {
             const result = await this.redis.sismember(key, member);
             return result === 1;
-        } catch (error) {
+        } catch (error: any) {
             logger.error('Cache sismember error', { error: error.message, key });
             throw new CacheError(`Failed to check set membership: ${error.message}`);
         }
@@ -430,7 +477,7 @@ export class CacheService {
             const result = await this.redis.zadd(key, score, member);
             logger.debug('Cache zadd', { key, score, member, result });
             return result;
-        } catch (error) {
+        } catch (error: any) {
             logger.error('Cache zadd error', { error: error.message, key });
             throw new CacheError(`Failed to add to sorted set: ${error.message}`);
         }
@@ -444,7 +491,7 @@ export class CacheService {
             const result = await this.redis.zrange(key, start, stop);
             logger.debug('Cache zrange', { key, start, stop, count: result.length });
             return result;
-        } catch (error) {
+        } catch (error: any) {
             logger.error('Cache zrange error', { error: error.message, key });
             throw new CacheError(`Failed to get sorted set range: ${error.message}`);
         }
@@ -458,7 +505,7 @@ export class CacheService {
             const result = await this.redis.zrangebyscore(key, min, max);
             logger.debug('Cache zrangebyscore', { key, min, max, count: result.length });
             return result;
-        } catch (error) {
+        } catch (error: any) {
             logger.error('Cache zrangebyscore error', { error: error.message, key });
             throw new CacheError(`Failed to get sorted set by score: ${error.message}`);
         }
@@ -472,7 +519,7 @@ export class CacheService {
             const result = await this.redis.publish(channel, message);
             logger.debug('Cache publish', { channel, message: message.substring(0, 100) });
             return result;
-        } catch (error) {
+        } catch (error: any) {
             logger.error('Cache publish error', { error: error.message, channel });
             throw new CacheError(`Failed to publish message: ${error.message}`);
         }
@@ -493,24 +540,35 @@ export class CacheService {
             });
 
             logger.info('Cache subscription started', { channels });
-        } catch (error) {
+        } catch (error: any) {
             logger.error('Cache subscribe error', { error: error.message, channels });
             throw new CacheError(`Failed to subscribe to channel: ${error.message}`);
         }
     }
 
     /**
-     * Clear all cache
-     */
-    async clear(): Promise<void> {
+ * Clear entire cache or only keys matching a pattern
+ */
+    async clear(pattern?: string): Promise<void> {
         try {
-            await this.redis.flushdb();
-            logger.info('Cache cleared completely');
-        } catch (error) {
+            if (pattern) {
+                const keys = await this.redis.keys(pattern);
+                if (keys.length > 0) {
+                    await this.redis.del(...keys);
+                    logger.info(`Cache cleared for pattern: ${pattern}`);
+                } else {
+                    logger.info(`No keys found for pattern: ${pattern}`);
+                }
+            } else {
+                await this.redis.flushdb();
+                logger.info('Entire cache cleared');
+            }
+        } catch (error: any) {
             logger.error('Cache clear error', { error: error.message });
             throw new CacheError(`Failed to clear cache: ${error.message}`);
         }
     }
+
 
     /**
      * Get cache statistics
@@ -542,7 +600,7 @@ export class CacheService {
                 evictionCount: evictedMatch ? parseInt(evictedMatch[1]) : 0,
                 expirationCount: expiredMatch ? parseInt(expiredMatch[1]) : 0,
             };
-        } catch (error) {
+        } catch (error: any) {
             logger.error('Cache stats error', { error: error.message });
             throw new CacheError(`Failed to get cache statistics: ${error.message}`);
         }
@@ -579,7 +637,7 @@ export class CacheService {
                 status: 'healthy',
                 latency,
             };
-        } catch (error) {
+        } catch (error: any) {
             return {
                 status: 'unhealthy',
                 latency: Date.now() - start,
@@ -595,23 +653,23 @@ export class CacheService {
         try {
             await this.redis.quit();
             logger.info('Cache service disconnected');
-        } catch (error) {
+        } catch (error: any) {
             logger.error('Cache disconnect error', { error: error.message });
             throw error;
         }
     }
 
     /**
-     * Create pipeline for batch operations
-     */
-    pipeline(): Redis.Pipeline {
+ * Create pipeline for batch operations
+ */
+    pipeline(): ChainableCommander {
         return this.redis.pipeline();
     }
 
     /**
      * Create transaction for atomic operations
      */
-    multi(): Redis.Pipeline {
+    multi(): ChainableCommander {
         return this.redis.multi();
     }
 }
@@ -639,7 +697,7 @@ export class SessionCacheService extends CacheService {
             createdAt: new Date().toISOString(),
         };
 
-        await this.set(key, data, 3600); // 1 hour
+        await this.set(key, data, { ttl: 3600 }); // 1 hour
     }
 
     /**
@@ -671,7 +729,7 @@ export class SessionCacheService extends CacheService {
      */
     async cacheUserSessionsIndex(userId: string, sessionIds: string[]): Promise<void> {
         const key = `user_sessions:${userId}`;
-        await this.set(key, sessionIds, 3600); // 1 hour
+        await this.set(key, sessionIds, { ttl: 3600 }); // 1 hour
     }
 
     /**
@@ -683,15 +741,15 @@ export class SessionCacheService extends CacheService {
     }
 
     /**
-     * Invalidate all user sessions
-     */
+ * Invalidate all user sessions
+ */
     async invalidateAllUserSessions(userId: string): Promise<void> {
         const indexKey = `user_sessions:${userId}`;
-        const sessionIds = await this.get(indexKey);
+        const sessionIds = await this.get(indexKey) as string[] | null;
 
         if (sessionIds) {
             // Delete all sessions
-            const deletePromises = sessionIds.map(sessionId =>
+            const deletePromises = sessionIds.map((sessionId: string) =>
                 this.invalidateSession(sessionId)
             );
 
@@ -716,7 +774,7 @@ export class UserCacheService extends CacheService {
      */
     async cacheUserProfile(userId: string, profile: any): Promise<void> {
         const key = `user_profile:${userId}`;
-        await this.set(key, profile, 1800); // 30 minutes
+        await this.set(key, profile, { ttl: 1800 }); // 30 minutes
     }
 
     /**
@@ -732,7 +790,7 @@ export class UserCacheService extends CacheService {
      */
     async cacheUserByEmail(email: string, userData: any): Promise<void> {
         const key = `user_email:${email.toLowerCase()}`;
-        await this.set(key, userData, 1800); // 30 minutes
+        await this.set(key, userData, { ttl: 1800 }); // 30 minutes
     }
 
     /**
@@ -748,7 +806,7 @@ export class UserCacheService extends CacheService {
      */
     async cacheUserPermissions(userId: string, permissions: string[]): Promise<void> {
         const key = `user_permissions:${userId}`;
-        await this.set(key, permissions, 3600); // 1 hour
+        await this.set(key, permissions, { ttl: 3600 }); // 1 hour
     }
 
     /**
@@ -764,7 +822,7 @@ export class UserCacheService extends CacheService {
      */
     async cacheUserSubscription(userId: string, subscription: any): Promise<void> {
         const key = `user_subscription:${userId}`;
-        await this.set(key, subscription, 900); // 15 minutes
+        await this.set(key, subscription, { ttl: 900 }); // 15 minutes
     }
 
     /**
@@ -873,7 +931,7 @@ export class RateLimitCacheService extends CacheService {
             await this.set(key, {
                 tokens: remaining,
                 lastRefill: now,
-            }, Math.ceil(refillPeriod / 1000));
+            }, { ttl: Math.ceil(refillPeriod / 1000) });
         }
 
         const retryAfter = allowed ? undefined : Math.ceil((1 - newTokens) / refillRate * refillPeriod / 1000);
@@ -927,7 +985,7 @@ export class ApiResponseCacheService extends CacheService {
         ttl: number = 300
     ): Promise<void> {
         const key = this.generateResponseKey(method, path, query);
-        await this.set(key, response, ttl);
+        await this.set(key, response, { ttl: ttl });
     }
 
     /**
@@ -974,7 +1032,7 @@ export class ApiResponseCacheService extends CacheService {
      */
     async cacheHealthCheck(service: string, status: any, ttl: number = 60): Promise<void> {
         const key = `health_check:${service}`;
-        await this.set(key, status, ttl);
+        await this.set(key, status, { ttl: ttl });
     }
 
     /**
@@ -1109,7 +1167,7 @@ export class CacheWarmingService {
             try {
                 const data = await dataProvider();
                 await this.warmCache(data);
-            } catch (error) {
+            } catch (error: any) {
                 logger.error('Scheduled cache warming failed', { error: error.message });
             }
         };

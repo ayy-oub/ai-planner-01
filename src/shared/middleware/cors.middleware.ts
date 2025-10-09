@@ -109,7 +109,7 @@ export class CorsMiddleware {
     adminCors = this.dynamicCors({
         origins: config.app.env === 'production'
             ? ['https://admin.aiplanner.com']
-            : ['http://localhost:3001'],
+            : ['http://localhost:3000'],
         methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
         allowCredentials: true,
     });
@@ -205,11 +205,12 @@ export class CorsMiddleware {
      * Get client IP from request
      */
     private getClientIp(req: Request): string {
-        return req.ip ||
-            req.connection.remoteAddress ||
-            req.socket.remoteAddress ||
-            (req.connection.socket as any)?.remoteAddress ||
-            'unknown';
+        return (
+            req.ip ||
+            (req.connection as any)?.remoteAddress ||
+            (req.socket as any)?.remoteAddress ||
+            'unknown'
+        );
     }
 
     /**

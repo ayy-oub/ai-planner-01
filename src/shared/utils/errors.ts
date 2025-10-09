@@ -6,13 +6,15 @@ export class AppError extends Error {
     public readonly errorCode: string;
     public readonly details?: any;
     public readonly isOperational: boolean;
+    public code: string; 
 
     constructor(
         message: string,
         statusCode: number = 500,
         errorCode: string = 'INTERNAL_ERROR',
         details?: any,
-        isOperational: boolean = true
+        isOperational: boolean = true,
+        code = "INTERNAL_ERROR"
     ) {
         super(message);
         Object.setPrototypeOf(this, new.target.prototype);
@@ -21,6 +23,7 @@ export class AppError extends Error {
         this.errorCode = errorCode;
         this.details = details;
         this.isOperational = isOperational;
+        this.code = code;
 
         Error.captureStackTrace(this, this.constructor);
     }
@@ -295,6 +298,8 @@ export enum ErrorCode {
     API_TIMEOUT_ERROR = 'API_TIMEOUT_ERROR',
     API_RESPONSE_ERROR = 'API_RESPONSE_ERROR',
     API_RATE_LIMIT_EXCEEDED = 'API_RATE_LIMIT_EXCEEDED',
+
+    INVALID_INPUT = 'INVALID_INPUT'
 }
 
 /**

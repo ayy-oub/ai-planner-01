@@ -356,4 +356,10 @@ export const emergencyLogger = (error: Error, context?: any) => {
     });
 };
 
+export const stream = {
+    write: (message: string) => {
+        logger.info(message.trim());
+    },
+};
+
 export default logger;

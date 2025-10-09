@@ -28,6 +28,31 @@ const configSchema = Joi.object({
     FIREBASE_DATABASE_URL: Joi.string().uri().required(),
     FIREBASE_STORAGE_BUCKET: Joi.string().required(),
 
+    // Database:
+    DB_HOST: Joi.string().default('localhost'),
+    DB_PORT: Joi.number().default(5432),
+    DB_NAME: Joi.string().default('ai_planner'),
+    DB_USER: Joi.string().allow(''),
+    DB_PASSWORD: Joi.string().allow(''),
+    DB_SSL: Joi.boolean().default(false),
+    DB_POOL_MIN: Joi.number().default(2),
+    DB_POOL_MAX: Joi.number().default(10),
+    DB_POOL_ACQUIRE: Joi.number().default(30000),
+    DB_POOL_IDLE: Joi.number().default(10000),
+
+    DB_QUERY_TIMEOUT: Joi.number().default(30000),
+    DB_SLOW_QUERY_THRESHOLD: Joi.number().default(1000),
+    DB_MAX_QUERY_TIME: Joi.number().default(60000),
+
+    DB_CACHE_ENABLED: Joi.boolean().default(false),
+    DB_CACHE_TTL: Joi.number().default(300),
+    DB_CACHE_CHECK_PERIOD: Joi.number().default(60),
+
+    DB_BACKUP_ENABLED: Joi.boolean().default(false),
+    DB_BACKUP_INTERVAL: Joi.string().default('0 2 * * *'),
+    DB_BACKUP_RETENTION: Joi.number().default(30),
+    DB_BACKUP_BUCKET: Joi.string().allow(''),
+
     // Redis
     REDIS_HOST: Joi.string().default('localhost'),
     REDIS_PORT: Joi.number().port().default(6379),
@@ -169,6 +194,8 @@ export const config = {
         bcryptRounds: envVars.BCRYPT_ROUNDS,
         sessionSecret: envVars.SESSION_SECRET,
         apiKeySecret: envVars.API_KEY_SECRET,
+        enableHsts: envVars.ENABLE_HSTS,
+        enableCsp: envVars.ENABLE_CSP,
     },
 
     firebase: {
@@ -179,6 +206,41 @@ export const config = {
         storageBucket: envVars.FIREBASE_STORAGE_BUCKET,
     },
 
+    database: {
+        host: envVars.DB_HOST || 'localhost',
+        port: parseInt(envVars.DB_PORT, 10) || 5432,
+        name: envVars.DB_NAME || 'ai_planner',
+        user: envVars.DB_USER || '',
+        password: envVars.DB_PASSWORD || '',
+        ssl: envVars.DB_SSL === true || envVars.DB_SSL === 'true',
+
+        pool: {
+            min: parseInt(envVars.DB_POOL_MIN, 10) || 2,
+            max: parseInt(envVars.DB_POOL_MAX, 10) || 10,
+            acquire: parseInt(envVars.DB_POOL_ACQUIRE, 10) || 30000,
+            idle: parseInt(envVars.DB_POOL_IDLE, 10) || 10000,
+        },
+
+        query: {
+            timeout: parseInt(envVars.DB_QUERY_TIMEOUT, 10) || 30000,
+            slowQueryThreshold: parseInt(envVars.DB_SLOW_QUERY_THRESHOLD, 10) || 1000,
+            maxQueryTime: parseInt(envVars.DB_MAX_QUERY_TIME, 10) || 60000,
+        },
+
+        cache: {
+            enabled: envVars.DB_CACHE_ENABLED === 'true',
+            ttl: parseInt(envVars.DB_CACHE_TTL, 10) || 300,
+            checkPeriod: parseInt(envVars.DB_CACHE_CHECK_PERIOD, 10) || 60,
+        },
+
+        backup: {
+            enabled: envVars.DB_BACKUP_ENABLED === 'true',
+            interval: envVars.DB_BACKUP_INTERVAL || '0 2 * * *',
+            retention: parseInt(envVars.DB_BACKUP_RETENTION, 10) || 30,
+            bucket: envVars.DB_BACKUP_BUCKET || '',
+        },
+    },
+
     redis: {
         host: envVars.REDIS_HOST,
         port: envVars.REDIS_PORT,
@@ -186,6 +248,10 @@ export const config = {
         db: envVars.REDIS_DB,
         tls: envVars.REDIS_TLS,
         cluster: envVars.REDIS_CLUSTER,
+        retry: {
+            maxRetriesPerRequest: 3,
+            enableOfflineQueue: false,
+          }
     },
 
     rateLimit: {
@@ -230,19 +296,21 @@ export const config = {
         sameSite: envVars.COOKIE_SAME_SITE,
     },
 
-    security: {
-        enableHsts: envVars.ENABLE_HSTS,
-        enableCsp: envVars.ENABLE_CSP,
-    },
-
     email: {
+        transport: 'smtp' as const,
         smtp: {
-            host: envVars.SMTP_HOST,
-            port: envVars.SMTP_PORT,
+          host: envVars.SMTP_HOST,
+          port: envVars.SMTP_PORT,
+          secure: envVars.SMTP_SECURE,
+          auth: {
             user: envVars.SMTP_USER,
             pass: envVars.SMTP_PASS,
-            secure: envVars.SMTP_SECURE,
-            tls: envVars.SMTP_TLS,
+          },
+          pool: true, // enables connection pooling
+          maxConnections: 5, // maximum simultaneous connections
+          maxMessages: 100, // maximum messages per connection
+          rateDelta: 2000, // time window for rate limiting (in ms)
+          rateLimit: 5, // maximum messages per rateDelta
         },
         from: {
             email: envVars.FROM_EMAIL,

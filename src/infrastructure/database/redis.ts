@@ -1,18 +1,18 @@
-import { createClient, RedisClientType } from 'redis';
+import Redis, { Redis as RedisClient, RedisOptions } from 'ioredis';
 import { config } from '../../shared/config';
 import { logger } from '../../shared/utils/logger';
 import { AppError } from '../../shared/utils/errors';
 
 class RedisConnection {
     private static instance: RedisConnection;
-    private client: RedisClientType | null = null;
+    private client: RedisClient | null = null;
     private isConnected = false;
     private connectionRetryCount = 0;
     private readonly maxRetries = 5;
     private readonly retryDelay = 3000; // 3 seconds
 
     private constructor() {
-        this.initializeRedis();
+        void this.initializeRedis(); // fire-and-forget async init
     }
 
     static getInstance(): RedisConnection {
@@ -24,26 +24,23 @@ class RedisConnection {
 
     private async initializeRedis(): Promise<void> {
         try {
-            const connectionConfig = {
-                socket: {
-                    host: config.redis.host,
-                    port: config.redis.port,
-                    reconnectStrategy: (retries: number) => {
-                        if (retries > this.maxRetries) {
-                            logger.error('Max Redis reconnection attempts reached');
-                            return new Error('Max reconnection attempts reached');
-                        }
-                        return Math.min(retries * 1000, 3000);
-                    },
-                },
+            const redisOptions: RedisOptions = {
+                host: config.redis.host,
+                port: config.redis.port,
                 password: config.redis.password || undefined,
-                database: config.redis.database || 0,
-                retryDelayOnFailover: 100,
+                db: config.redis.db || 0,
+                retryStrategy: (times: number) => {
+                    if (times > this.maxRetries) {
+                        logger.error('Max Redis reconnection attempts reached');
+                        return null; // stop retrying
+                    }
+                    return this.retryDelay;
+                },
                 enableReadyCheck: true,
                 maxRetriesPerRequest: 3,
             };
 
-            this.client = createClient(connectionConfig);
+            this.client = new Redis(redisOptions);
 
             this.setupEventHandlers();
 
@@ -51,8 +48,9 @@ class RedisConnection {
 
             this.isConnected = true;
             this.connectionRetryCount = 0;
+
             logger.info('Redis connection established successfully');
-        } catch (error) {
+        } catch (error: unknown) {
             logger.error('Failed to initialize Redis:', error);
             await this.handleConnectionError(error);
         }
@@ -61,7 +59,7 @@ class RedisConnection {
     private setupEventHandlers(): void {
         if (!this.client) return;
 
-        this.client.on('error', (error) => {
+        this.client.on('error', (error: unknown) => {
             logger.error('Redis client error:', error);
             this.isConnected = false;
         });
@@ -88,7 +86,7 @@ class RedisConnection {
         });
     }
 
-    private async handleConnectionError(error: any): Promise<void> {
+    private async handleConnectionError(error: unknown): Promise<void> {
         this.connectionRetryCount++;
 
         if (this.connectionRetryCount < this.maxRetries) {
@@ -104,7 +102,7 @@ class RedisConnection {
         return new Promise(resolve => setTimeout(resolve, ms));
     }
 
-    getClient(): RedisClientType {
+    getClient(): RedisClient {
         if (!this.client || !this.isConnected) {
             throw new AppError('Redis connection not established', 500);
         }
@@ -117,7 +115,7 @@ class RedisConnection {
 
             await this.client.ping();
             return true;
-        } catch (error) {
+        } catch (error: unknown) {
             logger.error('Redis health check failed:', error);
             return false;
         }
@@ -131,7 +129,7 @@ class RedisConnection {
                 this.isConnected = false;
                 logger.info('Redis connection closed');
             }
-        } catch (error) {
+        } catch (error: unknown) {
             logger.error('Error closing Redis connection:', error);
             throw new AppError('Failed to close Redis connection', 500);
         }
@@ -148,4 +146,10 @@ class RedisConnection {
 
 // Export singleton instance
 export const redisConnection = RedisConnection.getInstance();
+
+export async function connectRedis(): Promise<Redis | undefined> {
+    await redisConnection.getClient().connect(); // Or ensure connected
+    return redisConnection.getClient();
+};
+
 export default redisConnection;

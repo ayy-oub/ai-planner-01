@@ -25,6 +25,7 @@ export type {
     SortOptions,
     FilterOptions,
     SearchOptions,
+    ErrorTrackingInfo
 } from './common.types';
 
 export type {

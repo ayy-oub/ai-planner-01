@@ -62,11 +62,15 @@ class RedisManager {
                     password: config.redis.password || undefined,
                     db: config.redis.db,
                     tls: config.redis.tls ? {} : undefined,
-                    retryDelayOnFailure: 100,
-                    maxRetriesPerRequest: 3,
-                    enableOfflineQueue: false,
+                    maxRetriesPerRequest: config.redis.retry?.maxRetriesPerRequest ?? 3,
+                    enableOfflineQueue: config.redis.retry?.enableOfflineQueue ?? false,
                     lazyConnect: true,
+                    retryStrategy(times) {
+                        // delay reconnect by 100ms * number of attempts
+                        return Math.min(times * 100, 2000);
+                    }
                 });
+
 
                 this.subscriber = this.client.duplicate();
                 this.publisher = this.client.duplicate();

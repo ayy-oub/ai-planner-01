@@ -11,6 +11,7 @@ export interface PaginationOptions {
     offset: number;
     sort?: string;
     order?: 'asc' | 'desc';
+    cursor?: string | FirebaseFirestore.DocumentSnapshot;
 }
 
 /**
@@ -729,69 +730,3 @@ export interface ServiceConfig {
         metricsPort?: number;
     };
 }
-
-export default {
-    // Enums
-    UserRole,
-    SubscriptionStatus,
-    CollaboratorRole,
-    CollaboratorStatus,
-    CircuitBreakerState,
-
-    // Types
-    PaginationOptions,
-    PaginationMetadata,
-    PaginatedResponse,
-    CursorPaginationOptions,
-    CursorPaginationMetadata,
-    CursorPaginatedResponse,
-    SortOptions,
-    FilterOptions,
-    SearchOptions,
-    DateRange,
-    TimeRange,
-    Coordinates,
-    Address,
-    FileInfo,
-    ImageInfo,
-    MediaInfo,
-    ColorInfo,
-    IconInfo,
-    EntityMetadata,
-    SoftDeletable,
-    Archivable,
-    Publishable,
-    Shareable,
-    SharePermissions,
-    Collaborative,
-    Collaborator,
-    CollaborationSettings,
-    ActivityLog,
-    NotificationPreferences,
-    RateLimitInfo,
-    ApiKeyInfo,
-    WebhookEvent,
-    ExportOptions,
-    ImportOptions,
-    ImportResult,
-    BackupInfo,
-    AuditLogEntry,
-    SystemInfo,
-    HealthStatus,
-    ErrorTrackingInfo,
-    PerformanceMetrics,
-    FeatureFlag,
-    ABTest,
-    SearchResult,
-    Recommendation,
-    AnalyticsEvent,
-    MLPrediction,
-    ValidationResult,
-    BatchOperationResult,
-    QueueJob,
-    QueueJobResult,
-    CacheEntry,
-    RateLimiterConfig,
-    CircuitBreakerConfig,
-    ServiceConfig,
-};

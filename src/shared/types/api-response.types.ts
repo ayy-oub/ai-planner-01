@@ -324,7 +324,7 @@ export interface HateoasLink {
  * HATEOAS response
  */
 export interface HateoasResponse<T = any> extends SuccessResponse<T> {
-    links: HateoasLink[];
+    hateoasLinks: HateoasLink[];
     embedded?: Record<string, any>;
 }
 

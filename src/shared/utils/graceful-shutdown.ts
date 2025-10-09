@@ -1,85 +1,70 @@
 import { Server } from 'http';
-import { Redis } from 'ioredis';
+import Redis from 'ioredis';
 import { logger } from './logger';
-import { AppError } from './errors';
 
-/**
- * Shutdown handler options
- */
 export interface ShutdownOptions {
-  timeout?: number; // Maximum time to wait for graceful shutdown (ms)
-  forceExit?: boolean; // Whether to force exit after timeout
-  signals?: NodeJS.Signals[]; // Signals to handle
-  cleanup?: () => Promise<void>; // Custom cleanup function
+  timeout?: number; // Maximum wait for shutdown (ms)
+  forceExit?: boolean; 
+  signals?: NodeJS.Signals[];
+  cleanup?: () => Promise<void>;
 }
 
-/**
- * Resource interface for cleanup
- */
 export interface DisposableResource {
   name: string;
   close: () => Promise<void>;
   isConnected?: () => boolean;
 }
 
-/**
- * Graceful shutdown manager
- */
 export class GracefulShutdownManager {
   private resources: DisposableResource[] = [];
-  private isShuttingDown = false;
+  private isShuttingDownFlag = false;
   private options: Required<ShutdownOptions>;
 
   constructor(options: ShutdownOptions = {}) {
     this.options = {
-      timeout: options.timeout || 30000,
+      timeout: options.timeout ?? 30000,
       forceExit: options.forceExit !== false,
-      signals: options.signals || ['SIGTERM', 'SIGINT', 'SIGUSR2'],
-      cleanup: options.cleanup || (async () => {}),
+      signals: options.signals ?? ['SIGTERM', 'SIGINT', 'SIGUSR2'],
+      cleanup: options.cleanup ?? (async () => {}),
     };
 
     this.setupSignalHandlers();
   }
 
-  /**
-   * Setup signal handlers
-   */
   private setupSignalHandlers(): void {
-    this.options.signals.forEach(signal => {
-      process.on(signal, () => {
-        logger.info(`Received ${signal}, starting graceful shutdown`);
-        this.shutdown(signal);
+    this.options.signals.forEach(sig => {
+      process.on(sig, () => {
+        logger.info(`Received signal ${sig}, starting graceful shutdown`);
+        this.shutdown(sig).catch(err => {
+          logger.error('Shutdown error in signal handler', { err: err instanceof Error ? err.message : String(err) });
+        });
       });
     });
 
-    // Handle uncaught exceptions and unhandled rejections
-    process.on('uncaughtException', (error) => {
-      logger.error('Uncaught exception', { error: error.message, stack: error.stack });
-      this.shutdown('UNCAUGHT_EXCEPTION');
+    process.on('uncaughtException', (error: unknown) => {
+      logger.error('Uncaught exception', {
+        error: error instanceof Error ? error.message : String(error),
+        stack: error instanceof Error ? error.stack : undefined,
+      });
+      this.shutdown('UNCAUGHT_EXCEPTION').catch(() => process.exit(1));
     });
 
-    process.on('unhandledRejection', (reason, promise) => {
+    process.on('unhandledRejection', (reason: unknown, promise: Promise<any>) => {
       logger.error('Unhandled rejection', { reason, promise });
-      this.shutdown('UNHANDLED_REJECTION');
+      this.shutdown('UNHANDLED_REJECTION').catch(() => process.exit(1));
     });
   }
 
-  /**
-   * Add resource for cleanup
-   */
   addResource(resource: DisposableResource): void {
     this.resources.push(resource);
     logger.info(`Added resource for cleanup: ${resource.name}`);
   }
 
-  /**
-   * Remove HTTP server
-   */
-  addHttpServer(server: Server, name: string = 'HTTP Server'): void {
+  addHttpServer(server: Server, name = 'HTTP Server'): void {
     this.addResource({
       name,
       close: () => new Promise<void>((resolve, reject) => {
-        server.close((error) => {
+        server.close((error?: Error) => {
           if (error) {
             logger.error(`Error closing ${name}`, { error: error.message });
             reject(error);
@@ -89,85 +74,78 @@ export class GracefulShutdownManager {
           }
         });
       }),
-      isConnected: () => server.listening,
+      isConnected: () => {
+        // Type assertion: Node.js Server has `listening`
+        // @ts-ignore
+        return (server as any).listening === true;
+      },
     });
   }
 
-  /**
-   * Add Redis connection
-   */
-  addRedis(redis: Redis, name: string = 'Redis'): void {
+  addRedis(redisClient: Redis, name = 'Redis'): void {
     this.addResource({
       name,
       close: async () => {
-        await redis.quit();
+        await redisClient.quit();
         logger.info(`${name} connection closed`);
       },
-      isConnected: () => redis.status === 'ready',
+      isConnected: () => redisClient.status === 'ready',
     });
   }
 
-  /**
-   * Add database connection
-   */
-  addDatabase(connection: any, name: string = 'Database'): void {
+  addDatabase(connection: any, name = 'Database'): void {
     this.addResource({
       name,
       close: async () => {
-        if (connection.close) {
+        if (typeof connection.close === 'function') {
           await connection.close();
-        } else if (connection.destroy) {
+        } else if (typeof connection.destroy === 'function') {
           connection.destroy();
         }
         logger.info(`${name} connection closed`);
       },
-      isConnected: () => connection.readyState === 1 || connection.connected === true,
+      isConnected: () => {
+        if ('readyState' in connection) {
+          return connection.readyState === 1;
+        }
+        if ('connected' in connection) {
+          return connection.connected === true;
+        }
+        return false;
+      },
     });
   }
 
-  /**
-   * Graceful shutdown process
-   */
-  private async shutdown(signal: string): Promise<void> {
-    if (this.isShuttingDown) {
+  public async shutdown(signal: string | NodeJS.Signals): Promise<void> {
+    if (this.isShuttingDownFlag) {
       logger.warn('Shutdown already in progress');
       return;
     }
-
-    this.isShuttingDown = true;
-    const startTime = Date.now();
+    this.isShuttingDownFlag = true;
+    const start = Date.now();
 
     try {
       logger.info('Starting graceful shutdown', { signal, resources: this.resources.length });
 
-      // Stop accepting new connections
-      await this.stopAcceptingConnections();
+      // (Optional) stop accepting new connections: typically HTTP servers do this automatically after close()
 
-      // Run custom cleanup
       logger.info('Running custom cleanup');
-      await this.runWithTimeout(
-        this.options.cleanup(),
-        5000,
-        'Custom cleanup timed out'
-      );
+      await this.runWithTimeout(this.options.cleanup(), 5000, 'Custom cleanup timed out');
 
-      // Close resources in reverse order
       logger.info('Closing resources');
       await this.closeResources();
 
-      // Final cleanup
       await this.finalCleanup();
 
-      const duration = Date.now() - startTime;
+      const duration = Date.now() - start;
       logger.info('Graceful shutdown completed', { duration: `${duration}ms` });
 
-      // Exit process
       process.exit(0);
-
-    } catch (error) {
-      logger.error('Graceful shutdown failed', { 
-        error: error.message,
-        duration: `${Date.now() - startTime}ms`
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      logger.error('Graceful shutdown failed', {
+        error: msg,
+        duration: `${Date.now() - start}ms`,
       });
 
       if (this.options.forceExit) {
@@ -177,158 +155,84 @@ export class GracefulShutdownManager {
     }
   }
 
-  /**
-   * Stop accepting new connections
-   */
-  private async stopAcceptingConnections(): Promise<void> {
-    logger.info('Stopping connection acceptance');
-    
-    // Mark HTTP servers as not listening
-    for (const resource of this.resources) {
-      if (resource.name.includes('Server') && resource.isConnected) {
-        logger.info(`Stopping ${resource.name} from accepting new connections`);
-      }
-    }
-  }
-
-  /**
-   * Close all resources
-   */
   private async closeResources(): Promise<void> {
-    // Close resources in reverse order (last added first)
-    const resourcesToClose = [...this.resources].reverse();
-
-    const closePromises = resourcesToClose.map(async (resource) => {
+    const reversed = [...this.resources].reverse();
+    for (const resource of reversed) {
       try {
         logger.info(`Closing resource: ${resource.name}`);
-        
         if (resource.isConnected && !resource.isConnected()) {
-          logger.info(`Resource ${resource.name} is already disconnected`);
-          return;
+          logger.info(`Resource ${resource.name} already disconnected`);
+          continue;
         }
-
-        await this.runWithTimeout(
-          resource.close(),
-          10000,
-          `Resource ${resource.name} close timed out`
-        );
-
+        await this.runWithTimeout(resource.close(), 10000, `Resource ${resource.name} close timed out`);
         logger.info(`Resource ${resource.name} closed successfully`);
-      } catch (error) {
-        logger.error(`Error closing resource ${resource.name}`, { error: error.message });
-        // Continue with other resources even if one fails
+      } catch (err: unknown) {
+        const msg = err instanceof Error ? err.message : String(err);
+        logger.error(`Error closing resource ${resource.name}`, { error: msg });
       }
-    });
-
-    await Promise.allSettled(closePromises);
-  }
-
-  /**
-   * Final cleanup tasks
-   */
-  private async finalCleanup(): Promise<void> {
-    logger.info('Performing final cleanup');
-
-    try {
-      // Close logger transports
-      if (logger.transports) {
-        logger.info('Closing logger transports');
-        // Note: Winston logger cleanup would go here
-      }
-
-      // Clear any remaining intervals/timeouts
-      const activeHandles = process._getActiveHandles();
-      const activeRequests = process._getActiveRequests();
-
-      logger.info('Cleanup statistics', {
-        activeHandles: activeHandles.length,
-        activeRequests: activeRequests.length,
-      });
-
-    } catch (error) {
-      logger.error('Final cleanup error', { error: error.message });
     }
   }
 
-  /**
-   * Run function with timeout
-   */
-  private async runWithTimeout<T>(
-    promise: Promise<T>,
-    timeoutMs: number,
-    timeoutMessage: string
-  ): Promise<T> {
-    const timeoutPromise = new Promise<never>((_, reject) => {
-      setTimeout(() => {
-        reject(new Error(timeoutMessage));
-      }, timeoutMs);
+  private async finalCleanup(): Promise<void> {
+    logger.info('Performing final cleanup');
+    try {
+      // If logger has transports to close, do it here
+      // Clearing intervals / timeouts, etc.
+      // Using internal Node methods is risky: process._getActiveHandles etc.
+      // You may wrap it in try/catch or mark @ts-ignore
+      // ...
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      logger.error('Final cleanup error', { error: msg });
+    }
+  }
+
+  private async runWithTimeout<T>(promise: Promise<T>, timeoutMs: number, timeoutMessage: string): Promise<T> {
+    const timeout = new Promise<never>((_, reject) => {
+      setTimeout(() => reject(new Error(timeoutMessage)), timeoutMs);
     });
-
-    return Promise.race([promise, timeoutPromise]);
+    return Promise.race([promise, timeout]);
   }
 
-  /**
-   * Get shutdown status
-   */
-  isShuttingDown(): boolean {
-    return this.isShuttingDown;
+  public isShuttingDown(): boolean {
+    return this.isShuttingDownFlag;
   }
 
-  /**
-   * Get resource status
-   */
-  getResourceStatus(): Array<{
-    name: string;
-    status: 'connected' | 'disconnected' | 'unknown';
-  }> {
-    return this.resources.map(resource => ({
-      name: resource.name,
-      status: resource.isConnected 
-        ? (resource.isConnected() ? 'connected' : 'disconnected')
-        : 'unknown',
+  public getResourceStatus(): Array<{ name: string; status: 'connected' | 'disconnected' | 'unknown' }> {
+    return this.resources.map(res => ({
+      name: res.name,
+      status: res.isConnected
+        ? (res.isConnected() ? 'connected' : 'disconnected')
+        : 'unknown'
     }));
   }
 }
 
-/**
- * Health check manager
- */
 export class HealthCheckManager {
-  private checks: Map<string, () => Promise<boolean>> = new Map();
+  private checks = new Map<string, () => Promise<boolean>>();
 
-  /**
-   * Add health check
-   */
   addCheck(name: string, checkFn: () => Promise<boolean>): void {
     this.checks.set(name, checkFn);
   }
 
-  /**
-   * Run all health checks
-   */
-  async runChecks(): Promise<{
-    status: 'healthy' | 'unhealthy';
-    checks: Record<string, boolean>;
-  }> {
+  async runChecks(): Promise<{ status: 'healthy' | 'unhealthy'; checks: Record<string, boolean> }> {
     const results: Record<string, boolean> = {};
     let allHealthy = true;
 
-    const checkPromises = Array.from(this.checks.entries()).map(async ([name, checkFn]) => {
+    const promises = Array.from(this.checks.entries()).map(async ([name, fn]) => {
       try {
-        const isHealthy = await checkFn();
-        results[name] = isHealthy;
-        
-        if (!isHealthy) {
-          allHealthy = false;
-        }
-      } catch (error) {
-        logger.error(`Health check failed for ${name}`, { error: error.message });
+        const ok = await fn();
+        results[name] = ok;
+        if (!ok) allHealthy = false;
+      } catch (err: unknown) {
+        const msg = err instanceof Error ? err.message : String(err);
+        logger.error(`Health check failed for ${name}`, { error: msg });
         results[name] = false;
         allHealthy = false;
       }
     });
 
-    await Promise.all(checkPromises);
+    await Promise.all(promises);
 
     return {
       status: allHealthy ? 'healthy' : 'unhealthy',
@@ -337,186 +241,127 @@ export class HealthCheckManager {
   }
 }
 
-/**
- * Process manager
- */
 export class ProcessManager {
   private shutdownManager: GracefulShutdownManager;
   private healthCheckManager: HealthCheckManager;
 
-  constructor(options ?: ShutdownOptions) {
+  constructor(options?: ShutdownOptions) {
     this.shutdownManager = new GracefulShutdownManager(options);
     this.healthCheckManager = new HealthCheckManager();
-}
+  }
 
-/**
- * Get shutdown manager
- */
-getShutdownManager(): GracefulShutdownManager {
+  getShutdownManager(): GracefulShutdownManager {
     return this.shutdownManager;
-}
+  }
 
-/**
- * Get health check manager
- */
-getHealthCheckManager(): HealthCheckManager {
+  getHealthCheckManager(): HealthCheckManager {
     return this.healthCheckManager;
-}
+  }
 
-/**
- * Setup process monitoring
- */
-setupMonitoring(): void {
-    // Monitor memory usage
+  setupMonitoring(): void {
+    // Memory usage monitor
     const memoryCheck = setInterval(() => {
-        const usage = process.memoryUsage();
+      const usage = process.memoryUsage();
+      const usedMb = (usage.heapUsed / 1024 / 1024).toFixed(2);
+      const totalMb = (usage.heapTotal / 1024 / 1024).toFixed(2);
 
-        if (usage.heapUsed > 500 * 1024 * 1024) { // 500MB
-            logger.warn('High memory usage detected', {
-                heapUsed: `${Math.round(usage.heapUsed / 1024 / 1024)}MB`,
-                heapTotal: `${Math.round(usage.heapTotal / 1024 / 1024)}MB`,
-                rss: `${Math.round(usage.rss / 1024 / 1024)}MB`,
-            });
-        }
-    }, 30000); // Check every 30 seconds
+      if (usage.heapUsed > 500 * 1024 * 1024) {
+        logger.warn('High memory usage detected', {
+          heapUsed: `${usedMb}MB`,
+          heapTotal: `${totalMb}MB`,
+          rss: `${(usage.rss / 1024 / 1024).toFixed(2)}MB`,
+        });
+      }
+    }, 30000);
 
     this.shutdownManager.addResource({
-        name: 'Memory Monitor',
-        close: async () => {
-            clearInterval(memoryCheck);
-        },
+      name: 'Memory Monitor',
+      close: async () => {
+        clearInterval(memoryCheck);
+      },
     });
 
-    // Monitor event loop lag
-    let lastCheck = process.hrtime.bigint();
+    // Event loop lag monitor
+    let last = process.hrtime.bigint();
     const lagCheck = setInterval(() => {
-        const now = process.hrtime.bigint();
-        const lag = Number(now - lastCheck) / 1000000 - 1000; // Expected 1000ms interval
-
-        if (lag > 1000) { // 1 second lag
-            logger.warn('Event loop lag detected', { lag: `${lag.toFixed(2)}ms` });
-        }
-
-        lastCheck = now;
+      const now = process.hrtime.bigint();
+      const diffMs = Number(now - last) / 1_000_000 - 1000;
+      if (diffMs > 1000) {
+        logger.warn('Event loop lag detected', { lag: `${diffMs.toFixed(2)}ms` });
+      }
+      last = now;
     }, 1000);
 
     this.shutdownManager.addResource({
-        name: 'Event Loop Monitor',
-        close: async () => {
-            clearInterval(lagCheck);
-        },
+      name: 'Event Loop Monitor',
+      close: async () => {
+        clearInterval(lagCheck);
+      },
     });
-}
+  }
 }
 
-/**
- * Cleanup utilities
- */
 export const cleanupUtils = {
-    /**
-     * Close database connections
-     */
-    async closeDatabaseConnections(): Promise<void> {
-        logger.info('Closing database connections');
-        // Implementation would go here
-    },
-
-    /**
-     * Close cache connections
-     */
-    async closeCacheConnections(): Promise<void> {
-        logger.info('Closing cache connections');
-        // Implementation would go here
-    },
-
-    /**
-     * Stop background jobs
-     */
-    async stopBackgroundJobs(): Promise<void> {
-        logger.info('Stopping background jobs');
-        // Implementation would go here
-    },
-
-    /**
-     * Close file handles
-     */
-    async closeFileHandles(): Promise<void> {
-        logger.info('Closing file handles');
-        // Implementation would go here
-    },
-
-    /**
-     * Cleanup temporary files
-     */
-    async cleanupTemporaryFiles(): Promise<void> {
-        logger.info('Cleaning up temporary files');
-        // Implementation would go here
-    },
-
-    /**
-     * Notify external services
-     */
-    async notifyExternalServices(): Promise<void> {
-        logger.info('Notifying external services of shutdown');
-        // Implementation would go here
-    },
+  async closeDatabaseConnections(): Promise<void> {
+    logger.info('Closing database connections');
+    // ...
+  },
+  async closeCacheConnections(): Promise<void> {
+    logger.info('Closing cache connections');
+    // ...
+  },
+  async stopBackgroundJobs(): Promise<void> {
+    logger.info('Stopping background jobs');
+    // ...
+  },
+  async closeFileHandles(): Promise<void> {
+    logger.info('Closing file handles');
+    // ...
+  },
+  async cleanupTemporaryFiles(): Promise<void> {
+    logger.info('Cleaning up temporary files');
+    // ...
+  },
+  async notifyExternalServices(): Promise<void> {
+    logger.info('Notifying external services of shutdown');
+    // ...
+  }
 };
 
-/**
- * Quick shutdown setup
- */
 export const setupGracefulShutdown = (
-    server?: Server,
-    redis?: Redis,
-    options?: ShutdownOptions
+  server?: Server,
+  redisClient?: Redis,
+  options?: ShutdownOptions
 ): GracefulShutdownManager => {
-    const shutdownManager = new GracefulShutdownManager(options);
+  const manager = new GracefulShutdownManager(options);
+  if (server) {
+    manager.addHttpServer(server);
+  }
+  if (redisClient) {
+    manager.addRedis(redisClient);
+  }
 
-    if (server) {
-        shutdownManager.addHttpServer(server);
+  manager.addResource({
+    name: 'Default Cleanup',
+    close: async () => {
+      await Promise.all([
+        cleanupUtils.closeDatabaseConnections(),
+        cleanupUtils.closeCacheConnections(),
+        cleanupUtils.stopBackgroundJobs(),
+        cleanupUtils.cleanupTemporaryFiles(),
+        cleanupUtils.notifyExternalServices(),
+      ]);
     }
+  });
 
-    if (redis) {
-        shutdownManager.addRedis(redis);
-    }
-
-    // Add default cleanup
-    shutdownManager.addResource({
-        name: 'Default Cleanup',
-        close: async () => {
-            await Promise.all([
-                cleanupUtils.closeDatabaseConnections(),
-                cleanupUtils.closeCacheConnections(),
-                cleanupUtils.stopBackgroundJobs(),
-                cleanupUtils.cleanupTemporaryFiles(),
-                cleanupUtils.notifyExternalServices(),
-            ]);
-        },
-    });
-
-    return shutdownManager;
+  return manager;
 };
 
-/**
- * Emergency shutdown
- */
-export const emergencyShutdown = (reason: string, code: number = 1): void => {
-    logger.error('Emergency shutdown initiated', { reason, code });
-
-    // Log stack trace
-    console.error('Emergency shutdown stack trace:');
-    console.trace();
-
-    // Force exit after a short delay to allow logging
-    setTimeout(() => {
-        process.exit(code);
-    }, 1000);
-};
-
-export {
-    GracefulShutdownManager,
-    HealthCheckManager,
-    ProcessManager,
-    setupGracefulShutdown,
-    emergencyShutdown,
+export const emergencyShutdown = (reason: string, code = 1): void => {
+  logger.error('Emergency shutdown initiated', { reason, code });
+  console.error('Emergency shutdown stack trace:');
+  console.trace();
+  setTimeout(() => {
+    process.exit(code);
+  }, 1000);
 };

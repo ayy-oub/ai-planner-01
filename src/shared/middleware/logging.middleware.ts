@@ -1,12 +1,12 @@
 import { Request, Response, NextFunction } from 'express';
 import { logger } from '../utils/logger';
-import { v4 as uuidv4 } from 'uuid';
+const { v4: uuidv4 } = require('uuid');
 
 /**
  * Request logging middleware
  */
 export const requestLogger = (req: Request, res: Response, next: NextFunction) => {
-    const requestId = req.headers['x-request-id'] || uuidv4();
+    const requestId = req.headers['x-request-id'] || uuidv4();;
     const startTime = Date.now();
 
     // Add request ID to request object for correlation
