@@ -8,6 +8,7 @@ const configSchema = Joi.object({
     // Application
     NODE_ENV: Joi.string().valid('development', 'production', 'test', 'staging').default('development'),
     PORT: Joi.number().port().default(5000),
+    APP_URL: Joi.string().uri().default('http://localhost:5000'),
     API_VERSION: Joi.string().default('v1'),
     API_PREFIX: Joi.string().default('/api'),
 
@@ -27,6 +28,8 @@ const configSchema = Joi.object({
     FIREBASE_PRIVATE_KEY: Joi.string().required(),
     FIREBASE_DATABASE_URL: Joi.string().uri().required(),
     FIREBASE_STORAGE_BUCKET: Joi.string().required(),
+    UPLOAD_STORAGE_DEFAULT: Joi.string().valid('local', 'cloudinary', 's3', 'firebase').default('local'), UPLOAD_FIREBASE_PUBLIC: Joi.boolean().default(true),
+    UPLOAD_FIREBASE_SIGNED_URL_EXPIRY_MS: Joi.number().default(1000 * 60 * 60 * 24 * 365 * 10), // 10 y
 
     // Database:
     DB_HOST: Joi.string().default('localhost'),
@@ -60,6 +63,12 @@ const configSchema = Joi.object({
     REDIS_DB: Joi.number().default(0),
     REDIS_TLS: Joi.boolean().default(false),
     REDIS_CLUSTER: Joi.boolean().default(false),
+
+    //Cloudinary
+    CLOUDINARY_CLOUD_NAME: Joi.string().allow(''),
+    CLOUDINARY_API_KEY: Joi.string().allow(''),
+    CLOUDINARY_API_SECRET: Joi.string().allow(''),
+
 
     // Rate Limiting
     RATE_LIMIT_WINDOW_MS: Joi.number().default(900000),
@@ -158,6 +167,10 @@ const configSchema = Joi.object({
     ENABLE_REAL_TIME_NOTIFICATIONS: Joi.boolean().default(true),
     ENABLE_CALENDAR_SYNC: Joi.boolean().default(true),
     ENABLE_HANDWRITING_RECOGNITION: Joi.boolean().default(true),
+
+
+
+
 });
 
 // Validate configuration
@@ -180,6 +193,7 @@ export const config = {
     app: {
         env: envVars.NODE_ENV,
         port: envVars.PORT,
+        url: envVars.APP_URL,
         version: envVars.API_VERSION,
         prefix: envVars.API_PREFIX,
         debug: envVars.DEBUG,
@@ -204,6 +218,12 @@ export const config = {
         privateKey: envVars.FIREBASE_PRIVATE_KEY.replace(/\\n/g, '\n'),
         databaseURL: envVars.FIREBASE_DATABASE_URL,
         storageBucket: envVars.FIREBASE_STORAGE_BUCKET,
+    },
+
+    cloudinary: {
+        cloudName: envVars.CLOUDINARY_CLOUD_NAME,
+        apiKey: envVars.CLOUDINARY_API_KEY,
+        apiSecret: envVars.CLOUDINARY_API_SECRET,
     },
 
     database: {
@@ -251,7 +271,7 @@ export const config = {
         retry: {
             maxRetriesPerRequest: 3,
             enableOfflineQueue: false,
-          }
+        }
     },
 
     rateLimit: {
@@ -267,6 +287,12 @@ export const config = {
         allowedFileTypes: parseArray(envVars.ALLOWED_FILE_TYPES),
         uploadDir: envVars.UPLOAD_DIR,
         maxFilesPerRequest: envVars.MAX_FILES_PER_REQUEST,
+        storageDefault: envVars.UPLOAD_STORAGE_DEFAULT,
+        firebase: {
+            public: envVars.UPLOAD_FIREBASE_PUBLIC,
+            signedUrlExpiryMs: envVars.UPLOAD_FIREBASE_SIGNED_URL_EXPIRY_MS,
+            bucket: envVars.FIREBASE_STORAGE_BUCKET,
+        },
     },
 
     logging: {
@@ -299,18 +325,18 @@ export const config = {
     email: {
         transport: 'smtp' as const,
         smtp: {
-          host: envVars.SMTP_HOST,
-          port: envVars.SMTP_PORT,
-          secure: envVars.SMTP_SECURE,
-          auth: {
-            user: envVars.SMTP_USER,
-            pass: envVars.SMTP_PASS,
-          },
-          pool: true, // enables connection pooling
-          maxConnections: 5, // maximum simultaneous connections
-          maxMessages: 100, // maximum messages per connection
-          rateDelta: 2000, // time window for rate limiting (in ms)
-          rateLimit: 5, // maximum messages per rateDelta
+            host: envVars.SMTP_HOST,
+            port: envVars.SMTP_PORT,
+            secure: envVars.SMTP_SECURE,
+            auth: {
+                user: envVars.SMTP_USER,
+                pass: envVars.SMTP_PASS,
+            },
+            pool: true, // enables connection pooling
+            maxConnections: 5, // maximum simultaneous connections
+            maxMessages: 100, // maximum messages per connection
+            rateDelta: 2000, // time window for rate limiting (in ms)
+            rateLimit: 5, // maximum messages per rateDelta
         },
         from: {
             email: envVars.FROM_EMAIL,

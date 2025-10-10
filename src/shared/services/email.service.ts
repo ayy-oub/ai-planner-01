@@ -1204,3 +1204,5 @@ export class EmailTemplateBuilder {
       `);
   }
 }
+
+export const emailService = new EmailService();

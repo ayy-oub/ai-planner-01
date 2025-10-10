@@ -29,6 +29,7 @@ import adminRoutes from './modules/admin/admin.routes';
 import userRoutes from './modules/user/user.routes';
 import healthRoutes from './modules/health/health.routes';
 import { corsMiddleware } from './shared/middleware/cors.middleware';
+import metricsCollector from './infrastructure/monitoring/metrics';
 
 const app: Application = express();
 
@@ -58,6 +59,23 @@ app.use(compression());
 // Request parsing
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
+
+// Metrics for all incoming requests
+app.use((req, res, next) => {
+    const startTime = Date.now();
+    res.on('finish', () => {
+        const duration = Date.now() - startTime;
+        metricsCollector.recordApiPerformance(
+            req.method,
+            req.originalUrl,
+            res.statusCode,
+            duration,
+            req.headers['user-agent'] || '',
+            req.ip
+        );
+    });
+    next();
+});
 
 // Request ID middleware
 app.use(requestId);

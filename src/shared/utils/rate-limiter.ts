@@ -1,4 +1,4 @@
-import { Redis } from 'ioredis';
+import  RedisClientType  from 'ioredis';
 import { config } from '../config';
 import { AppError, RateLimitError } from './errors';
 import { logger } from './logger';
@@ -29,10 +29,10 @@ export interface RateLimitResult {
  * Redis-based rate limiter
  */
 export class RateLimiter {
-    private redis: Redis;
+    private redis: RedisClientType;
     private config: RateLimitConfig;
 
-    constructor(redis: Redis, config: RateLimitConfig) {
+    constructor(redis: RedisClientType, config: RateLimitConfig) {
         this.redis = redis;
         this.config = config;
     }
@@ -95,7 +95,7 @@ export class RateLimiter {
                 reset,
                 retryAfter,
             };
-        } catch (error) {
+        } catch (error: any) {
             logger.error('Rate limiter error', { error: error.message, identifier });
             // Fail open - allow request if rate limiter is down
             return {
@@ -131,7 +131,7 @@ export class RateLimiter {
         try {
             await this.redis.del(key);
             logger.info('Rate limit reset', { identifier, key });
-        } catch (error) {
+        } catch (error: any) {
             logger.error('Failed to reset rate limit', { error: error.message, identifier });
             throw new AppError('Failed to reset rate limit', 500, 'RATE_LIMIT_RESET_ERROR');
         }
@@ -172,7 +172,7 @@ export class RateLimiter {
                 limit: this.config.maxRequests,
                 reset,
             };
-        } catch (error) {
+        } catch (error: any) {
             logger.error('Failed to get rate limit stats', { error: error.message, identifier });
             throw new AppError('Failed to get rate limit statistics', 500, 'RATE_LIMIT_STATS_ERROR');
         }
@@ -183,9 +183,9 @@ export class RateLimiter {
  * Token bucket rate limiter
  */
 export class TokenBucketRateLimiter {
-    private redis: Redis;
+    private redis: RedisClientType;
 
-    constructor(redis: Redis) {
+    constructor(redis: RedisClientType) {
         this.redis = redis;
     }
 
@@ -259,8 +259,10 @@ export class TokenBucketRateLimiter {
             const allowed = result[0] === 1;
             const remaining = result[1];
 
+            let retryAfter: number | undefined;
+
             if (!allowed) {
-                const retryAfter = Math.ceil((tokens - remaining) / refillRate * refillPeriod);
+                retryAfter = Math.ceil((tokens - remaining) / refillRate * refillPeriod);
                 logger.warn('Token bucket rate limit exceeded', {
                     identifier,
                     tokens,
@@ -273,9 +275,9 @@ export class TokenBucketRateLimiter {
             return {
                 allowed,
                 remaining,
-                retryAfter: allowed ? undefined : retryAfter,
+                retryAfter,
             };
-        } catch (error) {
+        } catch (error: any) {
             logger.error('Token bucket rate limiter error', { error: error.message, identifier });
             // Fail open
             return {
@@ -290,9 +292,9 @@ export class TokenBucketRateLimiter {
  * Sliding window rate limiter
  */
 export class SlidingWindowRateLimiter {
-    private redis: Redis;
+    private redis: RedisClientType;
 
-    constructor(redis: Redis) {
+    constructor(redis: RedisClientType) {
         this.redis = redis;
     }
 
@@ -361,7 +363,7 @@ export class SlidingWindowRateLimiter {
                 reset: new Date(now + windowMs),
                 retryAfter: allowed ? undefined : retryAfter,
             };
-        } catch (error) {
+        } catch (error: any) {
             logger.error('Sliding window rate limiter error', { error: error.message, identifier });
             // Fail open
             return {
@@ -377,14 +379,14 @@ export class SlidingWindowRateLimiter {
 /**
  * Rate limiter middleware factory
  */
-export const createRateLimiter = (redis: Redis, config: RateLimitConfig) => {
+export const createRateLimiter = (redis: RedisClientType, config: RateLimitConfig) => {
     return new RateLimiter(redis, config);
 };
 
 /**
  * Pre-configured rate limiters
  */
-export const createRateLimiters = (redis: Redis) => ({
+export const createRateLimiters = (redis: RedisClientType) => ({
     // General API rate limiting
     general: createRateLimiter(redis, {
         windowMs: 15 * 60 * 1000, // 15 minutes
@@ -434,7 +436,7 @@ export const createRateLimiters = (redis: Redis) => ({
 export class DistributedRateLimiter {
     private rateLimiters: Map<string, RateLimiter>;
 
-    constructor(private redis: Redis) {
+    constructor(private redis: RedisClientType) {
         this.rateLimiters = new Map();
     }
 

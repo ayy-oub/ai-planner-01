@@ -50,6 +50,9 @@ export interface MonitoringConfig {
         enabled: boolean;
         serviceName: string;
         sampleRate: number;
+        serviceVersion: number;
+        environment: string;
+        endpoint: string;
         exporters: {
             jaeger: boolean;
             zipkin: boolean;
@@ -70,6 +73,9 @@ export interface MonitoringConfig {
             version: string;
         };
     };
+    mongo:{
+        uri: string;
+    }
 }
 
 export const monitoringConfig: MonitoringConfig = {
@@ -122,6 +128,9 @@ export const monitoringConfig: MonitoringConfig = {
         enabled: config.app.env === 'production',
         serviceName: 'ai-planner-api',
         sampleRate: 0.1, // 10% sampling
+        serviceVersion: 1.0,
+        environment: config.app.env,
+        endpoint: 'http://localhost:4318/v1/traces',
         exporters: {
             jaeger: false,
             zipkin: false,
@@ -142,6 +151,9 @@ export const monitoringConfig: MonitoringConfig = {
             version: config.app.version,
         },
     },
+    mongo: {
+        uri: "test"
+    }
 };
 
 // Custom metric names

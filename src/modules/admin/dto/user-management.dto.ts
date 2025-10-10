@@ -2,7 +2,7 @@
 
 import { IsOptional, IsString, IsEnum, IsDateString, IsNumber, Min, Max, IsBoolean, IsEmail } from 'class-validator';
 import { Type } from 'class-transformer';
-import { UserRole, UserSubscriptionPlan } from '../../../shared/types/auth.types';
+import { UserRole, UserSubscriptionPlan } from '../../auth/auth.types';
 
 export class GetUsersDto {
     @IsOptional()

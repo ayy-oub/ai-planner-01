@@ -1,7 +1,7 @@
 // src/modules/admin/admin.types.ts
 
 import { Timestamp } from 'firebase-admin/firestore';
-import { UserRole, UserSubscriptionPlan } from '../../shared/types/auth.types';
+import { UserRole, UserSubscriptionPlan } from '../auth/auth.types';
 
 export interface AdminUser {
     uid: string;

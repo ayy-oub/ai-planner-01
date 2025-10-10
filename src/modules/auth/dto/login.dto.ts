@@ -29,7 +29,7 @@ export class LoginDto {
         required: true,
     })
     @IsEmail()
-    email: string;
+    email!: string;
 
     @ApiProperty({
         description: 'User password',
@@ -39,7 +39,7 @@ export class LoginDto {
         maxLength: 128,
     })
     @IsString()
-    password: string;
+    password!: string;
 
     @ApiProperty({
         description: 'Remember me option',
@@ -68,19 +68,19 @@ export class LoginResponseDto {
         description: 'Authentication status',
         example: true,
     })
-    success: boolean;
+    success!: boolean;
 
     @ApiProperty({
         description: 'Success message',
         example: 'Login successful',
     })
-    message: string;
+    message!: string;
 
     @ApiProperty({
         description: 'User data',
         type: Object,
     })
-    data: {
+    data!: {
         user: any;
         tokens: {
             accessToken: string;

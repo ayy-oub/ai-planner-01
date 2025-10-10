@@ -1,20 +1,22 @@
 import { Router } from 'express';
-import { authController } from './auth.controller';
-import { authMiddleware } from './auth.middleware';
+import { container } from 'tsyringe';
+import { AuthController } from './auth.controller';
+import { authMiddleware } from '../../shared/middleware/auth.middleware';
+import { validate } from '../../shared/middleware/validation.middleware';
 import {
-    registerValidation,
-    loginValidation,
-    refreshTokenValidation,
-    forgotPasswordValidation,
-    resetPasswordValidation,
-    updateProfileValidation,
-    changePasswordValidation,
-    verifyEmailValidation
+  registerValidation,
+  loginValidation,
+  refreshTokenValidation,
+  forgotPasswordValidation,
+  resetPasswordValidation,
+  updateProfileValidation,
+  changePasswordValidation,
+  verifyEmailValidation,
 } from './auth.validation';
-import { asyncHandler } from '@shared/utils/async-handler';
-import { validate } from '@shared/middleware/validation.middleware';
+import { asyncHandler } from '../../shared/utils/async-handler';
 
 const router = Router();
+const authController = container.resolve(AuthController);
 
 /**
  * @swagger
@@ -34,32 +36,35 @@ const router = Router();
  *       content:
  *         application/json:
  *           schema:
- *             $ref: '#/components/schemas/RegisterDto'
+ *             type: object
+ *             required:
+ *               - email
+ *               - password
+ *               - acceptTerms
+ *             properties:
+ *               email:
+ *                 type: string
+ *                 format: email
+ *               password:
+ *                 type: string
+ *                 minLength: 8
+ *               displayName:
+ *                 type: string
+ *                 minLength: 2
+ *                 maxLength: 50
+ *               acceptTerms:
+ *                 type: boolean
+ *               marketingEmails:
+ *                 type: boolean
  *     responses:
  *       201:
  *         description: User registered successfully
- *         content:
- *           application/json:
- *             schema:
- *               $ref: '#/components/schemas/AuthResponse'
  *       400:
  *         description: Validation error
- *         content:
- *           application/json:
- *             schema:
- *               $ref: '#/components/schemas/ErrorResponse'
  *       409:
  *         description: User already exists
- *         content:
- *           application/json:
- *             schema:
- *               $ref: '#/components/schemas/ErrorResponse'
  */
-router.post(
-    '/register',
-    validate(registerValidation),
-    asyncHandler(authController.register)
-);
+router.post('/register', validate(registerValidation), asyncHandler(authController.register));
 
 /**
  * @swagger
@@ -72,26 +77,25 @@ router.post(
  *       content:
  *         application/json:
  *           schema:
- *             $ref: '#/components/schemas/LoginDto'
+ *             type: object
+ *             required:
+ *               - email
+ *               - password
+ *             properties:
+ *               email:
+ *                 type: string
+ *                 format: email
+ *               password:
+ *                 type: string
  *     responses:
  *       200:
  *         description: Login successful
- *         content:
- *           application/json:
- *             schema:
- *               $ref: '#/components/schemas/AuthResponse'
- *       400:
- *         description: Validation error
  *       401:
  *         description: Invalid credentials
  *       423:
  *         description: Account locked
  */
-router.post(
-    '/login',
-    validate(loginValidation),
-    asyncHandler(authController.login)
-);
+router.post('/login', validate(loginValidation), asyncHandler(authController.login));
 
 /**
  * @swagger
@@ -104,22 +108,19 @@ router.post(
  *       content:
  *         application/json:
  *           schema:
- *             $ref: '#/components/schemas/TokenDto'
+ *             type: object
+ *             required:
+ *               - refreshToken
+ *             properties:
+ *               refreshToken:
+ *                 type: string
  *     responses:
  *       200:
  *         description: Token refreshed successfully
- *         content:
- *           application/json:
- *             schema:
- *               $ref: '#/components/schemas/TokenResponse'
  *       401:
  *         description: Invalid refresh token
  */
-router.post(
-    '/refresh',
-    validate(refreshTokenValidation),
-    asyncHandler(authController.refreshToken)
-);
+router.post('/refresh', validate(refreshTokenValidation), asyncHandler(authController.refreshToken));
 
 /**
  * @swagger
@@ -132,17 +133,8 @@ router.post(
  *     responses:
  *       200:
  *         description: Logout successful
- *         content:
- *           application/json:
- *             schema:
- *               $ref: '#/components/schemas/SuccessResponse'
  */
-router.post(
-    '/logout',
-    authMiddleware.authenticate,
-    authMiddleware.logActivity('USER_LOGOUT'),
-    asyncHandler(authController.logout)
-);
+router.post('/logout', authMiddleware.authenticate, authMiddleware.logActivity('USER_LOGOUT'), asyncHandler(authController.logout));
 
 /**
  * @swagger
@@ -154,19 +146,11 @@ router.post(
  *       - bearerAuth: []
  *     responses:
  *       200:
- *         description: User profile retrieved successfully
- *         content:
- *           application/json:
- *             schema:
- *               $ref: '#/components/schemas/UserProfileResponse'
+ *         description: Profile retrieved successfully
  *       401:
  *         description: Unauthorized
  */
-router.get(
-    '/me',
-    authMiddleware.authenticate,
-    asyncHandler(authController.getProfile)
-);
+router.get('/me', authMiddleware.authenticate, asyncHandler(authController.getProfile));
 
 /**
  * @swagger
@@ -181,22 +165,19 @@ router.get(
  *       content:
  *         application/json:
  *           schema:
- *             $ref: '#/components/schemas/UpdateProfileDto'
+ *             type: object
+ *             properties:
+ *               displayName:
+ *                 type: string
+ *               photoURL:
+ *                 type: string
+ *               preferences:
+ *                 type: object
  *     responses:
  *       200:
  *         description: Profile updated successfully
- *         content:
- *           application/json:
- *             schema:
- *               $ref: '#/components/schemas/UserProfileResponse'
  */
-router.patch(
-    '/update-profile',
-    authMiddleware.authenticate,
-    validate(updateProfileValidation),
-    authMiddleware.logActivity('PROFILE_UPDATED'),
-    asyncHandler(authController.updateProfile)
-);
+router.patch('/update-profile', authMiddleware.authenticate, validate(updateProfileValidation), authMiddleware.logActivity('PROFILE_UPDATED'), asyncHandler(authController.updateProfile));
 
 /**
  * @swagger
@@ -218,24 +199,16 @@ router.patch(
  *             properties:
  *               currentPassword:
  *                 type: string
- *                 minLength: 1
  *               newPassword:
  *                 type: string
  *                 minLength: 8
- *                 pattern: "^(?=.*[a-z])(?=.*[A-Z])(?=.*\\d)(?=.*[@$!%*?&])[A-Za-z\\d@$!%*?&]{8,}$"
  *     responses:
  *       200:
  *         description: Password changed successfully
  *       400:
  *         description: Invalid current password
  */
-router.post(
-    '/change-password',
-    authMiddleware.authenticate,
-    validate(changePasswordValidation),
-    authMiddleware.logActivity('PASSWORD_CHANGED'),
-    asyncHandler(authController.changePassword)
-);
+router.post('/change-password', authMiddleware.authenticate, validate(changePasswordValidation), authMiddleware.logActivity('PASSWORD_CHANGED'), asyncHandler(authController.changePassword));
 
 /**
  * @swagger
@@ -258,18 +231,10 @@ router.post(
  *     responses:
  *       200:
  *         description: Password reset email sent
- *         content:
- *           application/json:
- *             schema:
- *               $ref: '#/components/schemas/ForgotPasswordResponse'
  *       404:
  *         description: User not found
  */
-router.post(
-    '/forgot-password',
-    validate(forgotPasswordValidation),
-    asyncHandler(authController.forgotPassword)
-);
+router.post('/forgot-password', validate(forgotPasswordValidation), asyncHandler(authController.forgotPassword));
 
 /**
  * @swagger
@@ -295,18 +260,10 @@ router.post(
  *     responses:
  *       200:
  *         description: Password reset successfully
- *         content:
- *           application/json:
- *             schema:
- *               $ref: '#/components/schemas/ResetPasswordResponse'
  *       400:
  *         description: Invalid or expired token
  */
-router.post(
-    '/reset-password',
-    validate(resetPasswordValidation),
-    asyncHandler(authController.resetPassword)
-);
+router.post('/reset-password', validate(resetPasswordValidation), asyncHandler(authController.resetPassword));
 
 /**
  * @swagger
@@ -328,18 +285,10 @@ router.post(
  *     responses:
  *       200:
  *         description: Email verified successfully
- *         content:
- *           application/json:
- *             schema:
- *               $ref: '#/components/schemas/EmailVerificationResponse'
  *       400:
  *         description: Invalid or expired token
  */
-router.post(
-    '/verify-email',
-    validate(verifyEmailValidation),
-    asyncHandler(authController.verifyEmail)
-);
+router.post('/verify-email', validate(verifyEmailValidation), asyncHandler(authController.verifyEmail));
 
 /**
  * @swagger
@@ -352,16 +301,8 @@ router.post(
  *     responses:
  *       200:
  *         description: Verification email sent
- *         content:
- *           application/json:
- *             schema:
- *               $ref: '#/components/schemas/EmailVerificationResponse'
  */
-router.post(
-    '/resend-verification',
-    authMiddleware.authenticate,
-    asyncHandler(authController.resendVerificationEmail)
-);
+router.post('/resend-verification', authMiddleware.authenticate, asyncHandler(authController.resendVerificationEmail));
 
 /**
  * @swagger
@@ -374,26 +315,8 @@ router.post(
  *     responses:
  *       200:
  *         description: Active sessions retrieved
- *         content:
- *           application/json:
- *             schema:
- *               type: object
- *               properties:
- *                 success:
- *                   type: boolean
- *                 data:
- *                   type: object
- *                   properties:
- *                     sessions:
- *                       type: array
- *                       items:
- *                         type: object
  */
-router.get(
-    '/sessions',
-    authMiddleware.authenticate,
-    asyncHandler(authController.getSessions)
-);
+router.get('/sessions', authMiddleware.authenticate, asyncHandler(authController.getSessions));
 
 /**
  * @swagger
@@ -412,16 +335,8 @@ router.get(
  *     responses:
  *       200:
  *         description: Session terminated
- *         content:
- *           application/json:
- *             schema:
- *               $ref: '#/components/schemas/SuccessResponse'
  */
-router.delete(
-    '/sessions/:sessionId',
-    authMiddleware.authenticate,
-    asyncHandler(authController.terminateSession)
-);
+router.delete('/sessions/:sessionId', authMiddleware.authenticate, asyncHandler(authController.terminateSession));
 
 /**
  * @swagger
@@ -434,15 +349,7 @@ router.delete(
  *     responses:
  *       200:
  *         description: Other sessions terminated
- *         content:
- *           application/json:
- *             schema:
- *               $ref: '#/components/schemas/SuccessResponse'
  */
-router.post(
-    '/sessions/terminate-all',
-    authMiddleware.authenticate,
-    asyncHandler(authController.terminateAllOtherSessions)
-);
+router.post('/sessions/terminate-all', authMiddleware.authenticate, asyncHandler(authController.terminateAllOtherSessions));
 
 export default router;

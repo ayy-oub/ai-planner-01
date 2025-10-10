@@ -9,7 +9,7 @@ export class TokenDto {
     })
     @IsString()
     @IsNotEmpty()
-    refreshToken: string;
+    refreshToken!: string;
 }
 
 export class TokenResponseDto {
@@ -17,19 +17,19 @@ export class TokenResponseDto {
         description: 'Token refresh status',
         example: true,
     })
-    success: boolean;
+    success!: boolean;
 
     @ApiProperty({
         description: 'Success message',
         example: 'Token refreshed successfully',
     })
-    message: string;
+    message!: string;
 
     @ApiProperty({
         description: 'New tokens',
         type: Object,
     })
-    data: {
+    data!: {
         tokens: {
             accessToken: string;
             refreshToken: string;

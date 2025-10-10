@@ -5,7 +5,7 @@ import { AppError, ErrorCode } from '../utils/errors';
 import { CacheService } from '../services/cache.service';
 import { FirebaseService } from '../services/firebase.service';
 import { AuthService } from '../../modules/auth/auth.service';
-import { AuthRequest, JwtPayload } from '../types/auth.types'; // Adjust paths
+import { AuthRequest, JwtPayload } from '../../modules/auth/auth.types'; // Adjust paths
 import { logger } from '../utils/logger';
 
 const cacheService = new CacheService();

@@ -1,4 +1,3 @@
-import { promClient } from 'prom-client';
 import { prometheusService } from './prometheus';
 import { logger } from '../../shared/utils/logger';
 

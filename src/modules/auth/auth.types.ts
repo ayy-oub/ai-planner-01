@@ -336,6 +336,19 @@ export interface JwtPayload {
   exp: number;
 }
 
+export interface UserPayload {
+  uid: string;
+  email: string;
+  displayName?: string;
+  role?: string;
+  emailVerified?: boolean;
+  subscription?: {
+    plan: string;
+    [key: string]: any;
+  };
+  lockedUntil?: Date | null;
+}
+
 /**
  * Refresh token payload
  */
@@ -592,4 +605,57 @@ export type UserSortField =
 export interface UserSortOptions {
   field: UserSortField;
   order: 'asc' | 'desc';
+}
+
+export interface LoginRequest {
+  email: string;
+  password: string;
+  ip?: string;
+  userAgent?: string;
+}
+
+export interface RegisterRequest {
+  email: string;
+  password: string;
+  displayName?: string;
+  photoURL?: string;
+  acceptTerms: boolean;
+  marketingEmails?: boolean;
+  ip?: string;
+  userAgent?: string;
+}
+
+export interface RefreshTokenRequest {
+  refreshToken: string;
+}
+
+export interface ForgotPasswordRequest {
+  email: string;
+  recaptchaToken?: string;
+}
+
+export interface ResetPasswordRequest {
+  token: string;
+  newPassword: string;
+}
+
+export interface UpdateProfileRequest {
+  displayName?: string;
+  photoURL?: string;
+  preferences?: Partial<UserPreferences>;
+}
+
+export interface ChangePasswordRequest {
+  currentPassword: string;
+  newPassword: string;
+}
+
+export interface SecurityLog {
+  id: string;
+  userId: string;
+  event: string;
+  metadata?: any;
+  timestamp: Date;
+  ip: string;
+  userAgent: string;
 }

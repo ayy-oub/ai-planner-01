@@ -1,7 +1,7 @@
 // src/shared/services/notification.service.ts
 import { injectable, inject } from 'inversify';
-import { EmailService } from './email.service';
-import { CacheService } from './cache.service';
+import {emailService, EmailService } from './email.service';
+import {cacheService, CacheService } from './cache.service';
 import { firebaseManager } from '../config/firebase.config';   // <-- added
 import { getMessaging, Messaging, MulticastMessage } from 'firebase-admin/messaging';
 import logger from '../utils/logger';
@@ -277,3 +277,8 @@ export class NotificationService {
     logger.info(`Notification scheduled for ${p.scheduledFor!.toISOString()} (delay ${delay} ms)`);
   }
 }
+
+export const notificationService = new NotificationService(
+  emailService,
+  cacheService
+);

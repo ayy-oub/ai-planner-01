@@ -431,10 +431,12 @@ export const queryValidations = {
             .optional()
             .isString()
             .withMessage('Filter must be a string')
-            .custom((value) => {
+            .custom((value: string | undefined) => {
+                if (!value) return true;
+    
                 // Basic filter validation - can be extended
-                const filterFields = value.split(',').map(f => f.split(':')[0]);
-                return filterFields.every(field => allowedFields.includes(field));
+                const filterFields = value.split(',').map((f: string) => f.split(':')[0]);
+                return filterFields.every((field: string) => allowedFields.includes(field));
             })
             .withMessage(`Filter fields must be one of: ${allowedFields.join(', ')}`),
     ],

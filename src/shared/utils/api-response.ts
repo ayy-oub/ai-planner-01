@@ -1,6 +1,5 @@
 import { Response } from 'express';
 import { AppError } from './errors';
-import { logger } from './logger';
 
 /**
  * API response metadata
@@ -562,12 +561,4 @@ export const cachingUtils = {
 
         return false;
     },
-};
-
-export {
-    ApiResponse,
-    ExpressResponse,
-    responseUtils,
-    versioningUtils,
-    cachingUtils,
 };

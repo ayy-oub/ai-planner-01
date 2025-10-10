@@ -1,5 +1,5 @@
 // Export all shared types
-export * from './auth.types';
+export * from '../../modules/auth/auth.types';
 export * from './common.types';
 export * from './error.types';
 export * from './api-response.types';
@@ -13,7 +13,7 @@ export type {
     UserSubscription,
     UserStatistics,
     UserSecurity,
-} from './auth.types';
+} from '../../modules/auth/auth.types';
 
 export type {
     PaginationOptions,
@@ -25,7 +25,8 @@ export type {
     SortOptions,
     FilterOptions,
     SearchOptions,
-    ErrorTrackingInfo
+    ErrorTrackingInfo,
+    ValidationResult
 } from './common.types';
 
 export type {
@@ -41,6 +42,7 @@ export type {
     ApiResponse as ApiResponseType,
     ResponseMetadata,
     PaginationInfo,
+    AuthResponse
 } from './api-response.types';
 
 export type {

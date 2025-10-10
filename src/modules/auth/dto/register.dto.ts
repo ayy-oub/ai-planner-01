@@ -23,13 +23,9 @@ export class DeviceInfoDto {
 }
 
 export class RegisterDto {
-    @ApiProperty({
-        description: 'User email address',
-        example: 'newuser@example.com',
-        required: true,
-    })
+    @ApiProperty({ description: 'User email address', example: 'newuser@example.com', required: true })
     @IsEmail()
-    email: string;
+    email!: string;
 
     @ApiProperty({
         description: 'User password - must be strong',
@@ -45,73 +41,26 @@ export class RegisterDto {
         minNumbers: 1,
         minSymbols: 1,
     })
-    password: string;
+    password!: string;
 
-    @ApiProperty({
-        description: 'Display name (optional)',
-        example: 'John Doe',
-        required: false,
-        minLength: 2,
-        maxLength: 50,
-    })
+    @ApiProperty({ description: 'Display name (optional)', example: 'John Doe', required: false })
     @IsString()
     @IsOptional()
     displayName?: string;
 
-    @ApiProperty({
-        description: 'Must accept terms and conditions',
-        example: true,
-        required: true,
-    })
+    @ApiProperty({ description: 'Must accept terms and conditions', example: true, required: true })
     @IsBoolean()
-    acceptTerms: boolean;
+    acceptTerms!: boolean;
 
-    @ApiProperty({
-        description: 'Opt-in for marketing emails',
-        example: false,
-        required: false,
-        default: false,
-    })
+    @ApiProperty({ description: 'Opt-in for marketing emails', example: false, required: false, default: false })
     @IsBoolean()
     @IsOptional()
     marketingEmails?: boolean;
 
-    @ApiProperty({
-        description: 'Device information for session management',
-        type: DeviceInfoDto,
-        required: false,
-    })
+    @ApiProperty({ description: 'Device information for session management', type: DeviceInfoDto, required: false })
     @IsObject()
     @IsOptional()
     @ValidateNested()
     @Type(() => DeviceInfoDto)
     deviceInfo?: DeviceInfoDto;
-}
-
-export class RegisterResponseDto {
-    @ApiProperty({
-        description: 'Registration status',
-        example: true,
-    })
-    success: boolean;
-
-    @ApiProperty({
-        description: 'Success message',
-        example: 'User registered successfully',
-    })
-    message: string;
-
-    @ApiProperty({
-        description: 'User data and tokens',
-        type: Object,
-    })
-    data: {
-        user: any;
-        tokens: {
-            accessToken: string;
-            refreshToken: string;
-            expiresIn: number;
-            tokenType: string;
-        };
-    };
 }

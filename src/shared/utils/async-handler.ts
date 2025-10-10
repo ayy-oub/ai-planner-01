@@ -16,7 +16,7 @@ export const asyncMiddleware = (fn: Function) => {
   return async (req: Request, res: Response, next: NextFunction) => {
     try {
       await fn(req, res, next);
-    } catch (error) {
+    } catch (error: any) {
       // Log the error for debugging
       logger.error('Async middleware error', {
         error: error.message,
@@ -71,7 +71,7 @@ export const retryAsync = async <T>(
   for (let attempt = 1; attempt <= attempts; attempt++) {
     try {
       return await fn();
-    } catch (error) {
+    } catch (error: any) {
       lastError = error;
       
       // Log error
@@ -126,7 +126,7 @@ export const withTimeout = async <T>(
     const result = await Promise.race([promise, timeoutPromise]);
     clearTimeout(timeoutId!);
     return result;
-  } catch (error) {
+  } catch (error: any) {
     clearTimeout(timeoutId!);
     throw error;
   }
@@ -154,7 +154,7 @@ export const debounceAsync = <T extends (...args: any[]) => Promise<any>>(
         try {
           const result = await func(...args);
           resolve(result);
-        } catch (error) {
+        } catch (error: any) {
           reject(error);
         }
       };
@@ -206,7 +206,7 @@ export const throttleAsync = <T extends (...args: any[]) => Promise<any>>(
     try {
       const result = await func(...args);
       resolve(result);
-    } catch (error) {
+    } catch (error: any) {
       reject(error);
     } finally {
       inProgress--;
@@ -295,7 +295,7 @@ export const circuitBreakerAsync = <T extends (...args: any[]) => Promise<any>>(
       }
       
       return result;
-    } catch (error) {
+    } catch (error: any) {
       failures++;
       
       if (failures >= failureThreshold) {
@@ -404,7 +404,7 @@ export const retryWithBackoff = async <T>(
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
     try {
       return await fn();
-    } catch (error) {
+    } catch (error: any) {
       if (attempt === maxAttempts) {
         throw error;
       }
@@ -433,7 +433,7 @@ export const withFallback = async <T>(
 ): Promise<T> => {
   try {
     return await withTimeout(primary(), timeoutMs);
-  } catch (error) {
+  } catch (error: any) {
     if (error.code === 'TIMEOUT_ERROR') {
       return await fallback();
     }
@@ -476,20 +476,4 @@ export const memoizeAsync = <T extends (...args: any[]) => Promise<any>>(
 
     return result;
   }) as T;
-};
-
-export {
-  asyncHandler,
-  asyncMiddleware,
-  retryAsync,
-  withTimeout,
-  debounceAsync,
-  throttleAsync,
-  rateLimitAsync,
-  circuitBreakerAsync,
-  cacheAsync,
-  asyncPool,
-  retryWithBackoff,
-  withFallback,
-  memoizeAsync,
 };

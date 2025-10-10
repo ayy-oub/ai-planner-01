@@ -1,6 +1,5 @@
 import promClient from 'prom-client';
 import { logger } from '../../shared/utils/logger';
-import { config } from '../../shared/config';
 
 class PrometheusService {
     private static instance: PrometheusService;
@@ -8,20 +7,21 @@ class PrometheusService {
     private isInitialized = false;
 
     // Custom metrics
-    public httpRequestDuration: promClient.Histogram<string>;
-    public httpRequestTotal: promClient.Counter<string>;
-    public httpRequestErrors: promClient.Counter<string>;
-    public activeConnections: promClient.Gauge<string>;
-    public databaseQueryDuration: promClient.Histogram<string>;
-    public cacheHitRate: promClient.Gauge<string>;
-    public queueJobDuration: promClient.Histogram<string>;
-    public queueJobFailures: promClient.Counter<string>;
-    public userRegistrations: promClient.Counter<string>;
-    public plannerCreations: promClient.Counter<string>;
-    public aiRequests: promClient.Counter<string>;
-    public fileUploadSize: promClient.Histogram<string>;
-    public memoryUsage: promClient.Gauge<string>;
-    public cpuUsage: promClient.Gauge<string>;
+    public httpRequestDuration!: promClient.Histogram<string>;
+    public httpRequestTotal!: promClient.Counter<string>;
+    public httpRequestErrors!: promClient.Counter<string>;
+    public activeConnections!: promClient.Gauge<string>;
+    public databaseQueryDuration!: promClient.Histogram<string>;
+    public cacheHitRate!: promClient.Gauge<string>;
+    public queueJobDuration!: promClient.Histogram<string>;
+    public queueJobFailures!: promClient.Counter<string>;
+    public userRegistrations!: promClient.Counter<string>;
+    public plannerCreations!: promClient.Counter<string>;
+    public aiRequests!: promClient.Counter<string>;
+    public fileUploadSize!: promClient.Histogram<string>;
+    public memoryUsage!: promClient.Gauge<string>;
+    public cpuUsage!: promClient.Gauge<string>;
+
 
     private constructor() {
         this.register = new promClient.Registry();

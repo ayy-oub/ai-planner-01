@@ -1179,3 +1179,5 @@ export class CacheWarmingService {
         setInterval(warmCache, interval);
     }
 }
+
+export const cacheService = new CacheService();

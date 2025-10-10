@@ -9,7 +9,7 @@ export class ResetPasswordDto {
     })
     @IsString()
     @IsNotEmpty()
-    token: string;
+    token!: string;
 
     @ApiProperty({
         description: 'New password',
@@ -25,7 +25,7 @@ export class ResetPasswordDto {
         minNumbers: 1,
         minSymbols: 1,
     })
-    newPassword: string;
+    newPassword!: string;
 
     @ApiProperty({
         description: 'Confirm new password',
@@ -34,7 +34,7 @@ export class ResetPasswordDto {
     })
     @IsString()
     @IsNotEmpty()
-    confirmPassword: string;
+    confirmPassword!: string;
 }
 
 export class ResetPasswordResponseDto {
@@ -42,11 +42,11 @@ export class ResetPasswordResponseDto {
         description: 'Reset status',
         example: true,
     })
-    success: boolean;
+    success!: boolean;
 
     @ApiProperty({
         description: 'Success message',
         example: 'Password reset successfully',
     })
-    message: string;
+    message!: string;
 }

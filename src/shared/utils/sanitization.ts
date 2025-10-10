@@ -2,6 +2,9 @@ import DOMPurify from 'isomorphic-dompurify';
 import { AppError } from './errors';
 import { logger } from './logger';
 
+
+type NestedSchema = Record<string, ValidationRule>;
+
 /**
  * Sanitization options
  */
@@ -30,6 +33,7 @@ export interface ValidationRule {
     enum?: string[];
     sanitize?: boolean;
     sanitizerOptions?: SanitizationOptions;
+    nestedSchema?: Record<string, ValidationRule>;
 }
 
 /**
@@ -96,7 +100,7 @@ export class DataSanitizer {
             }
 
             return sanitized;
-        } catch (error) {
+        } catch (error: any) {
             logger.error('String sanitization error', { error, input });
             throw new AppError(`Sanitization failed: ${error.message}`, 400, 'SANITIZATION_ERROR');
         }
@@ -248,7 +252,12 @@ export class DataSanitizer {
                             break;
 
                         case 'object':
-                            sanitizedValue = this.sanitizeObject(value, rule.sanitizerOptions || {}).sanitized;
+                            if (!rule.nestedSchema) {
+                                result.warnings.push(`No schema provided for nested object '${key}'`);
+                                sanitizedValue = value;
+                            } else {
+                                sanitizedValue = this.sanitizeObject(value, rule.nestedSchema).sanitized;
+                            }
                             break;
 
                         default:
@@ -264,7 +273,7 @@ export class DataSanitizer {
 
                     result.sanitized[key] = sanitizedValue;
 
-                } catch (error) {
+                } catch (error: any) {
                     result.errors.push(`Field '${key}': ${error.message}`);
                 }
             }

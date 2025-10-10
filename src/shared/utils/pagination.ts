@@ -1,5 +1,13 @@
-import { Request } from 'express';
-import { AppError, ValidationError } from './errors';
+import { Request, Response, NextFunction } from 'express';
+import { ValidationError } from './errors';
+
+interface RequestWithPagination extends Request {
+    pagination?: PaginationOptions;
+}
+
+interface RequestWithCursorPagination extends Request {
+    cursorPagination?: CursorPaginationOptions;
+}
 
 /**
  * Pagination options
@@ -323,7 +331,11 @@ const buildPaginationUrl = (baseUrl: string, params: Record<string, any>): strin
 /**
  * Pagination middleware
  */
-export const paginationMiddleware = (req: Request, res: Response, next: NextFunction) => {
+export const paginationMiddleware = (
+    req: RequestWithPagination,
+    res: Response,
+    next: NextFunction
+) => {
     try {
         req.pagination = parsePagination(req);
         next();
@@ -332,10 +344,15 @@ export const paginationMiddleware = (req: Request, res: Response, next: NextFunc
     }
 };
 
+
 /**
  * Cursor pagination middleware
  */
-export const cursorPaginationMiddleware = (req: Request, res: Response, next: NextFunction) => {
+export const cursorPaginationMiddleware = (
+    req: RequestWithCursorPagination,
+    res: Response,
+    next: NextFunction
+) => {
     try {
         req.cursorPagination = parseCursorPagination(req);
         next();

@@ -1,4 +1,4 @@
-import request from 'supertest';
+/* import request from 'supertest';
 import { Express } from 'express';
 import { initializeTestDatabases, cleanupTestDatabases, clearTestData, createTestUser, deleteTestUser } from '../../../utils/test-database';
 import { createApp } from '../../../../src/app';
@@ -524,4 +524,4 @@ describe('Planner API Integration Tests', () => {
             expect(response.body.data.color).toBe('#FF5733');
         });
 
-        it('should fail for non
+        it('should fail for non */

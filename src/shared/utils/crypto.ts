@@ -1,8 +1,10 @@
-import crypto from 'crypto';
+import crypto, { CipherGCM, DecipherGCM } from 'crypto';
 import bcrypt from 'bcryptjs';
 import { config } from '../config';
 import { AppError } from './errors';
 
+
+type CharsetType = 'alphanumeric' | 'numeric' | 'alphabetic' | 'hex' | 'base64';
 /**
  * Encryption and hashing utilities
  */
@@ -45,8 +47,8 @@ export class CryptoUtils {
     /**
      * Generate cryptographically secure random string
      */
-    generateSecureString(length: number = 32, charset: string = 'alphanumeric'): string {
-        const charsets = {
+    generateSecureString(length: number = 32, charset: CharsetType = 'alphanumeric'): string {
+        const charsets: Record<CharsetType, string> = {
             alphanumeric: 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789',
             numeric: '0123456789',
             alphabetic: 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz',
@@ -54,7 +56,7 @@ export class CryptoUtils {
             base64: 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/',
         };
 
-        const chars = charsets[charset] || charsets.alphanumeric;
+        const chars = charsets[charset];
         const bytes = crypto.randomBytes(length);
         const result = [];
 
@@ -70,9 +72,16 @@ export class CryptoUtils {
      */
     encrypt(text: string, key?: string): { encrypted: string; iv: string; tag: string } {
         try {
-            const encryptionKey = key ? this.deriveKey(key) : this.getEncryptionKey();
+            const encryptionKey = key
+                ? Buffer.from(this.deriveKey(key), 'hex')
+                : Buffer.from(this.getEncryptionKey(), 'utf8');
+
             const iv = crypto.randomBytes(this.ivLength);
-            const cipher = crypto.createCipher(this.algorithm, encryptionKey, iv);
+            const cipher = crypto.createCipheriv(
+                this.algorithm,
+                encryptionKey,
+                iv
+            ) as CipherGCM;
 
             let encrypted = cipher.update(text, 'utf8', 'hex');
             encrypted += cipher.final('hex');
@@ -94,12 +103,15 @@ export class CryptoUtils {
      */
     decrypt(encryptedData: string, iv: string, tag: string, key?: string): string {
         try {
-            const encryptionKey = key ? this.deriveKey(key) : this.getEncryptionKey();
-            const decipher = crypto.createDecipher(
+            const encryptionKey = key
+                ? Buffer.from(this.deriveKey(key), 'hex')
+                : Buffer.from(this.getEncryptionKey(), 'utf8');
+
+            const decipher = crypto.createDecipheriv(
                 this.algorithm,
                 encryptionKey,
                 Buffer.from(iv, 'hex')
-            );
+            ) as unknown as DecipherGCM; // 👈 Cast to DecipherGCM
 
             decipher.setAuthTag(Buffer.from(tag, 'hex'));
 
@@ -167,7 +179,7 @@ export class CryptoUtils {
     /**
      * Generate RSA key pair
      */
-    generateRSAKeyPair(modulusLength: number = 2048): Promise<crypto.KeyPairSyncResult<string, string>> {
+    generateRSAKeyPair(modulusLength: number = 2048): crypto.KeyPairSyncResult<string, string> {
         try {
             return crypto.generateKeyPairSync('rsa', {
                 modulusLength,

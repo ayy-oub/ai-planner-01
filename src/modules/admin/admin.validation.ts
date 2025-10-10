@@ -1,7 +1,7 @@
 // src/modules/admin/admin.validation.ts
 
 import { body, param, query } from 'express-validator';
-import { UserRole, UserSubscriptionPlan } from '../../shared/types/auth.types';
+import { UserRole, UserSubscriptionPlan } from '../auth/auth.types';
 
 export const adminValidations = {
     // User management validations

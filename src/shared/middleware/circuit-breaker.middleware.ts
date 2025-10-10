@@ -217,6 +217,38 @@ export const circuitBreakers = {
         monitoringPeriod: 300000, // 5 minutes
         successThreshold: 3,
     }),
+
+    // GitHub API
+    github: new CircuitBreaker('github', {
+        failureThreshold: 5,
+        resetTimeout: 60000,
+        monitoringPeriod: 120000,
+        successThreshold: 3,
+    }),
+
+    // OpenAI API
+    openAI: new CircuitBreaker('openAI', {
+        failureThreshold: 4,
+        resetTimeout: 60000,
+        monitoringPeriod: 120000,
+        successThreshold: 2,
+    }),
+
+    // Google Calendar API
+    googleCalendar: new CircuitBreaker('googleCalendar', {
+        failureThreshold: 3,
+        resetTimeout: 60000,
+        monitoringPeriod: 120000,
+        successThreshold: 2,
+    }),
+
+    // SendGrid API
+    sendGrid: new CircuitBreaker('sendGrid', {
+        failureThreshold: 3,
+        resetTimeout: 120000,
+        monitoringPeriod: 300000,
+        successThreshold: 2,
+    }),
 };
 
 /**
