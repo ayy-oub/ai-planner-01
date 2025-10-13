@@ -7,6 +7,8 @@ import { FirebaseService } from '../services/firebase.service';
 import { AuthService } from '../../modules/auth/auth.service';
 import { AuthRequest, JwtPayload } from '../../modules/auth/auth.types'; // Adjust paths
 import { logger } from '../utils/logger';
+import { container } from 'tsyringe';
+import { User } from '../../modules/auth/auth.types';
 
 const cacheService = new CacheService();
 const firebaseService = FirebaseService.getInstance();
@@ -19,7 +21,7 @@ export class AuthMiddleware {
     private authService: AuthService;
 
     constructor() {
-        this.authService = new AuthService();
+        this.authService = container.resolve(AuthService);
     }
 
     /**
@@ -101,7 +103,7 @@ export class AuthMiddleware {
                 email: firebaseUser.email || user.email,
                 displayName: firebaseUser.displayName || user.displayName,
                 emailVerified: firebaseUser.emailVerified ?? user.emailVerified,
-            };
+            } as User;
 
             logger.debug('User authenticated', { userId: user.uid, email: user.email, path: req.path });
             next();
@@ -135,7 +137,7 @@ export class AuthMiddleware {
 
             const user = await this.authService.getProfile(decoded.uid);
             if (user && (!user.lockedUntil || user.lockedUntil <= new Date())) {
-                req.user = user;
+                req.user = user as User;
             }
             next();
         } catch (error) {
@@ -279,3 +281,12 @@ export class AuthMiddleware {
 }
 
 export const authMiddleware = new AuthMiddleware();
+// ✅ Shorthand functional exports for cleaner router usage
+export const authenticate = () => authMiddleware.authenticate;
+export const optionalAuth = () => authMiddleware.optional;
+export const requireEmailVerification = () => authMiddleware.requireEmailVerification;
+export const requireRoles = (...roles: string[]) => authMiddleware.requireRoles(...roles);
+export const requirePremium = () => authMiddleware.requirePremium;
+export const verifyApiKey = () => authMiddleware.verifyApiKey;
+export const rateLimitByUser = (windowMs: number, max: number) => authMiddleware.rateLimitByUser(windowMs, max);
+export const logActivity = (action: string, metadata?: any) => authMiddleware.logActivity(action, metadata);

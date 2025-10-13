@@ -16,14 +16,17 @@ import {
   RefreshTokenRequest,
   ForgotPasswordRequest,
   ResetPasswordRequest,
-  UpdateProfileRequest,
   ChangePasswordRequest,
-  UserProfile,
   AuthTokens,
   SecurityLog,
+  UpdateProfileRequest
+} from './auth.types';
+import {
+  UserProfile,
   SubscriptionStatus,
   User,
-} from './auth.types';
+  UserSubscriptionPlan,
+} from '../user/user.types';
 import {
   BadRequestError,
   UnauthorizedError,
@@ -55,13 +58,25 @@ export class AuthService {
       const userData: Partial<User> = {
         email: data.email.toLowerCase(),
         displayName: data.displayName,
-        photoURL: data.photoURL ?? undefined,
+        photoURL: undefined,
         emailVerified: false,
         preferences: {
           theme: 'light' as const,
           accentColor: '#3B82F6',
           defaultView: 'grid' as const,
-          notifications: true,
+          notifications: {
+            email: true,
+            push: true,
+            sms: false,
+            frequency: 'daily',
+            categories: {
+              taskReminders: true,
+              deadlineAlerts: false,
+              productivityInsights: false,
+              marketing: false,
+              updates: false,
+            }
+          },
           language: 'en',
           timezone: 'UTC',
           dateFormat: 'MM/DD/YYYY' as const,
@@ -73,7 +88,7 @@ export class AuthService {
           soundEnabled: true,
         },
         subscription: {
-          plan: 'free' as const,
+          plan: UserSubscriptionPlan.FREE,
           status: SubscriptionStatus.ACTIVE,
           expiresAt: undefined,
           features: ['basic-planning', 'basic-export'],

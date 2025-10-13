@@ -1,5 +1,5 @@
 // src/modules/auth/auth.repository.ts
-import { SubscriptionStatus, User } from './auth.types';
+import { SubscriptionStatus, User, UserSubscriptionPlan } from '../user/user.types';
 import { AppError, ErrorCode } from '../../shared/utils/errors';
 import { logger } from '../../shared/utils/logger';
 import firebaseConnection from '../../infrastructure/database/firebase';
@@ -62,7 +62,19 @@ export class AuthRepository {
           theme: 'light',
           accentColor: '#3B82F6',
           defaultView: 'daily',
-          notifications: true,
+          notifications: {
+            email: true,
+            push: true,
+            sms: false,
+            frequency: 'daily',
+            categories: {
+              taskReminders: true,
+              deadlineAlerts: false,
+              productivityInsights: false,
+              marketing: false,
+              updates: false,
+            }
+          },
           language: 'en',
           timezone: 'UTC',
           dateFormat: 'MM/DD/YYYY',
@@ -70,7 +82,7 @@ export class AuthRepository {
           ...userData.preferences,
         },
         subscription: {
-          plan: 'free',
+          plan: UserSubscriptionPlan.FREE,
           status: SubscriptionStatus.ACTIVE,
           features: ['basic-planning', 'basic-export'],
           limits: {

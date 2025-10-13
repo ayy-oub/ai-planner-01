@@ -14,9 +14,12 @@ import {
   verifyEmailValidation,
 } from './auth.validation';
 import { asyncHandler } from '../../shared/utils/async-handler';
+import { authRateLimiter } from '@/shared/middleware/rate-limit.middleware';
 
 const router = Router();
 const authController = container.resolve(AuthController);
+
+//router.use(authRateLimiter)
 
 /**
  * @swagger

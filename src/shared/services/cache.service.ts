@@ -672,6 +672,38 @@ export class CacheService {
     multi(): ChainableCommander {
         return this.redis.multi();
     }
+
+    /* ------------------------------------------------------------------ */
+    /*  NEW:  key enumeration  (simple KEYS implementation)                */
+    /* ------------------------------------------------------------------ */
+
+    /**
+     * Return all keys matching a pattern (uses native Redis KEYS).
+     * WARNING: O(N) – fine for admin/back-office, avoid in hot paths.
+     */
+    async keys(pattern: string): Promise<string[]> {
+        try {
+            const list = await this.redis.keys(pattern);
+            logger.debug('Cache keys', { pattern, count: list.length });
+            return list;
+        } catch (err: any) {
+            logger.error('Cache keys error', { pattern, error: err.message });
+            throw new CacheError(`Failed to list keys: ${err.message}`);
+        }
+    }
+
+    /**
+     * Delete every key that matches the pattern.
+     * Returns number of keys removed.
+     */
+    async deleteByPattern(pattern: string): Promise<number> {
+        const keys = await this.keys(pattern);
+        if (keys.length === 0) return 0;
+
+        const deleted = await this.deleteMany(keys);
+        logger.info('Cache deleteByPattern', { pattern, deleted });
+        return deleted;
+    }
 }
 
 /**

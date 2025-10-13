@@ -1,7 +1,7 @@
 // src/modules/admin/admin.types.ts
 
 import { Timestamp } from 'firebase-admin/firestore';
-import { UserRole, UserSubscriptionPlan } from '../auth/auth.types';
+import { UserRole, UserSubscriptionPlan } from '../user/user.types';
 
 export interface AdminUser {
     uid: string;
@@ -70,9 +70,7 @@ export interface SystemStats {
     systemHealth: {
         database: 'healthy' | 'degraded' | 'down';
         redis: 'healthy' | 'degraded' | 'down';
-        externalServices: {
-            [serviceName: string]: 'healthy' | 'degraded' | 'down';
-        };
+        externalServices?: Record<string, 'healthy' | 'degraded' | 'down'>;
     };
     generatedAt: Timestamp;
 }
@@ -87,6 +85,8 @@ export interface UserActivityLog {
     ipAddress: string;
     userAgent: string;
     timestamp: Timestamp;
+    initiatorRole?: UserRole;
+
 }
 
 export interface AdminAuditLog {
@@ -132,6 +132,10 @@ export interface UserStats {
     deleted: number;
     byPlan: Record<UserSubscriptionPlan, number>;
     byRole: Record<UserRole, number>;
+    trend?: {
+        dailyActiveUsers: number[];
+        labels: string[];
+      };
 }
 
 export interface SystemConfig {
@@ -156,3 +160,15 @@ export interface SystemConfig {
         dailyLimit: number;
     };
 }
+
+export interface BackupRecord {
+    id: string;
+    type: 'full' | 'incremental' | 'users' | 'planners';
+    size: number; // bytes
+    status: 'processing' | 'completed' | 'failed';
+    createdAt: Timestamp;
+    createdBy: string; // admin uid
+    downloadURL?: string;
+    checksum?: string;
+    metadata?: Record<string, any>;
+  }

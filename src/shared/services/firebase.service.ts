@@ -426,7 +426,7 @@ export class FirebaseService {
         buffer: Buffer,
         destination: string,
         metadata?: UploadOptions
-    ): Promise<[unknown, File]> {
+    ): Promise<[File]> {
         try {
             const bucket = this.storage.bucket();
             const file = bucket.file(destination);
@@ -436,7 +436,7 @@ export class FirebaseService {
             });
 
             logger.info('Buffer uploaded', { destination });
-            return [{}, file];
+            return [file];
         } catch (error: any) {
             logger.error('Failed to upload buffer', { error: error.message });
             throw new AppError(`Failed to upload buffer: ${error.message}`, 500, 'FIREBASE_STORAGE_ERROR');

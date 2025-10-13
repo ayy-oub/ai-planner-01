@@ -28,7 +28,6 @@ export class AuthController {
         email: req.body.email,
         password: req.body.password,
         displayName: req.body.displayName,
-        photoURL: req.body.photoURL,
         acceptTerms: req.body.acceptTerms,
         marketingEmails: req.body.marketingEmails,
         ip: req.ip,

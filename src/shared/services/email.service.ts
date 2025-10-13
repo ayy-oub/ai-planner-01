@@ -547,6 +547,42 @@ export class EmailService {
           The AI Planner Team
         `,
       },
+      {
+        name: 'account-banned',
+        subject: 'Account Suspended – AI Planner',
+        html: `
+          <div style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto;">
+            <h1>Account Suspended</h1>
+            <p>Hi {{name}},</p>
+            <p>Your account has been suspended{{#if reason}} for: <strong>{{reason}}</strong>{{/if}}.</p>
+            <p>Duration: <strong>{{#if duration}}{{duration}}{{else}}permanently{{/if}}</strong></p>
+            <p>If you believe this is an error, please contact support.</p>
+          </div>`,
+        text: `Hi {{name}}, your account has been suspended{{#if reason}} for: {{reason}}{{/if}} ({{#if duration}}{{duration}}{{else}}permanently{{/if}}). Contact support if this is an error.`,
+      },
+      {
+        name: 'account-unbanned',
+        subject: 'Account Restored – AI Planner',
+        html: `
+          <div style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto;">
+            <h1>Account Restored</h1>
+            <p>Hi {{name}},</p>
+            <p>Your account has been restored and is now fully accessible.</p>
+          </div>`,
+        text: `Hi {{name}}, your account has been restored and is now fully accessible.`,
+      },
+      {
+        name: 'account-deleted',
+        subject: 'Account Deleted – AI Planner',
+        html: `
+          <div style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto;">
+            <h1>Account Deleted</h1>
+            <p>Hi {{name}},</p>
+            <p>Your account has been deleted as requested.</p>
+            <p>If you did not initiate this action, please contact support immediately.</p>
+          </div>`,
+        text: `Hi {{name}}, your account has been deleted as requested. Contact support if you did not do this.`,
+      },
     ];
 
     // Register built-in templates
@@ -903,6 +939,60 @@ export class EmailService {
       expiryMinutes,
     });
   }
+
+  /* ------------------------------------------------------------------ */
+  /*  Admin-only templates (centralised inside EmailService)             */
+  /* ------------------------------------------------------------------ */
+
+  /** Account banned */
+  async sendAccountBannedEmail(
+    to: string,
+    name: string,
+    reason?: string,
+    duration?: string
+  ): Promise<EmailResult> {
+    return this.sendTemplate('account-banned', to, { name, reason, duration });
+  }
+
+  /** Account un-banned */
+  async sendAccountUnbannedEmail(to: string, name: string): Promise<EmailResult> {
+    return this.sendTemplate('account-unbanned', to, { name });
+  }
+
+  /** Account deleted (soft) */
+  async sendAccountDeletedEmail(to: string, name: string): Promise<EmailResult> {
+    return this.sendTemplate('account-deleted', to, { name });
+  }
+
+
+  /**
+   * Send data export started email
+   */
+  async sendDataExportStartedEmail(to: string,  exportUrl: string, name?: string): Promise<EmailResult> {
+    // First, register a template (built-in or dynamically)
+    if (!this.templateCache.has('data-export-started')) {
+      this.registerTemplate('data-export-started', {
+        name: 'data-export-started',
+        subject: 'Your data export has started',
+        html: `
+        <div>
+          <p>Hi {{name}},</p>
+          <p>Your requested data export has started. You can download it once it's ready:</p>
+          <a href="{{exportUrl}}">Download Export</a>
+          <p>Best regards,<br>The AI Planner Team</p>
+        </div>
+      `,
+        text: `
+        Hi {{name}},
+        Your requested data export has started. You can download it here: {{exportUrl}}
+        Best regards, The AI Planner Team
+      `,
+      });
+    }
+
+    return this.sendTemplate('data-export-started', to, { name, exportUrl });
+  }
+
 
   /**
    * Send planner shared email

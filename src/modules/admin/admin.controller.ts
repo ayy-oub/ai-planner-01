@@ -1,372 +1,279 @@
-// src/modules/admin/admin.controller.ts
-
-import { Request, Response, NextFunction } from 'express';
-import { injectable, inject } from 'inversify';
+import { Response, NextFunction } from 'express';
+import { injectable, inject } from 'tsyringe';
 import { AdminService } from './admin.service';
 import { asyncHandler } from '../../shared/utils/async-handler';
-import { validateRequest } from '../../shared/middleware/validation.middleware';
-import { requireAuth } from '../../shared/middleware/auth.middleware';
-import { requireRole } from '../../shared/middleware/rbac.middleware';
-import { GetUsersDto, UpdateUserDto, BanUserDto, BulkActionDto, ExportUsersDto, UserResponseDto } from './dto/user-management.dto';
-import { SystemStatsFilterDto, SystemHealthDto, PerformanceMetricsDto, AuditLogFilterDto, ConfigUpdateDto } from './dto/system-stats.dto';
-import logger from '../../shared/utils/logger';
+import { ApiResponse } from '../../shared/utils/api-response';
+import { AuthRequest } from '../../modules/auth/auth.types';
+import { logger } from '../../shared/utils/logger';
 
 @injectable()
 export class AdminController {
-    constructor(
-        @inject(AdminService) private adminService: AdminService
-    ) { }
+    constructor(@inject('AdminService') private readonly adminService: AdminService) { }
 
-    /**
-     * @desc   Get all users with filtering and pagination
-     * @route  GET /api/v1/admin/users
-     * @access Private (Admin only)
-     */
-    getUsers = asyncHandler(async (req: Request, res: Response, next: NextFunction) => {
-        const filter = await validateRequest(GetUsersDto, req.query);
-        const result = await this.adminService.getAllUsers(filter, req.user!.uid);
+    /* =========================================================
+       User management
+    ========================================================= */
 
-        res.status(200).json({
-            success: true,
-            data: result.users,
-            pagination: {
-                total: result.total,
-                page: result.page,
-                limit: result.limit,
-                pages: Math.ceil(result.total / result.limit)
-            }
-        });
+    getUsers = asyncHandler(async (req: AuthRequest, res: Response, next: NextFunction): Promise<void> => {
+        try {
+            const result = await this.adminService.getAllUsers(req.query, req.user!.uid);
+            const response = new ApiResponse(req).success(
+                {
+                    users: result.users,
+                    pagination: {
+                        total: result.total,
+                        page: result.page,
+                        limit: result.limit,
+                        pages: Math.ceil(result.total / result.limit),
+                    },
+                },
+                'Users retrieved successfully'
+            );
+            res.json(response);
+        } catch (err) {
+            logger.error('Get users controller error:', err);
+            next(err);
+        }
     });
 
-    /**
-     * @desc   Get user by ID
-     * @route  GET /api/v1/admin/users/:id
-     * @access Private (Admin only)
-     */
-    getUserById = asyncHandler(async (req: Request, res: Response, next: NextFunction) => {
-        const { id } = req.params;
-        const user = await this.adminService.getUserById(id, req.user!.uid);
-
-        res.status(200).json({
-            success: true,
-            data: user
-        });
+    getUserById = asyncHandler(async (req: AuthRequest, res: Response, next: NextFunction): Promise<void> => {
+        try {
+            const user = await this.adminService.getUserById(req.params.id, req.user!.uid);
+            const response = new ApiResponse(req).success(user, 'User retrieved successfully');
+            res.json(response);
+        } catch (err) {
+            logger.error('Get user by ID controller error:', err);
+            next(err);
+        }
     });
 
-    /**
-     * @desc   Update user
-     * @route  PATCH /api/v1/admin/users/:id
-     * @access Private (Admin only)
-     */
-    updateUser = asyncHandler(async (req: Request, res: Response, next: NextFunction) => {
-        const { id } = req.params;
-        const updates = await validateRequest(UpdateUserDto, req.body);
-        const updatedUser = await this.adminService.updateUser(id, updates, req.user!.uid);
-
-        res.status(200).json({
-            success: true,
-            message: 'User updated successfully',
-            data: updatedUser
-        });
+    updateUser = asyncHandler(async (req: AuthRequest, res: Response, next: NextFunction): Promise<void> => {
+        try {
+            const updated = await this.adminService.updateUser(req.params.id, req.body, req.user!.uid);
+            const response = new ApiResponse(req).success(updated, 'User updated successfully');
+            res.json(response);
+        } catch (err) {
+            logger.error('Update user controller error:', err);
+            next(err);
+        }
     });
 
-    /**
-     * @desc   Ban user
-     * @route  POST /api/v1/admin/users/:id/ban
-     * @access Private (Admin only)
-     */
-    banUser = asyncHandler(async (req: Request, res: Response, next: NextFunction) => {
-        const { id } = req.params;
-        const banData = await validateRequest(BanUserDto, req.body);
-        await this.adminService.banUser(id, banData, req.user!.uid);
-
-        res.status(200).json({
-            success: true,
-            message: 'User banned successfully'
-        });
+    banUser = asyncHandler(async (req: AuthRequest, res: Response, next: NextFunction): Promise<void> => {
+        try {
+            await this.adminService.banUser(req.params.id, req.body, req.user!.uid);
+            const response = new ApiResponse(req).success(null, 'User banned successfully');
+            res.json(response);
+        } catch (err) {
+            logger.error('Ban user controller error:', err);
+            next(err);
+        }
     });
 
-    /**
-     * @desc   Unban user
-     * @route  POST /api/v1/admin/users/:id/unban
-     * @access Private (Admin only)
-     */
-    unbanUser = asyncHandler(async (req: Request, res: Response, next: NextFunction) => {
-        const { id } = req.params;
-        await this.adminService.unbanUser(id, req.user!.uid);
-
-        res.status(200).json({
-            success: true,
-            message: 'User unbanned successfully'
-        });
+    unbanUser = asyncHandler(async (req: AuthRequest, res: Response, next: NextFunction): Promise<void> => {
+        try {
+            await this.adminService.unbanUser(req.params.id, req.user!.uid);
+            const response = new ApiResponse(req).success(null, 'User unbanned successfully');
+            res.json(response);
+        } catch (err) {
+            logger.error('Unban user controller error:', err);
+            next(err);
+        }
     });
 
-    /**
-     * @desc   Delete user
-     * @route  DELETE /api/v1/admin/users/:id
-     * @access Private (Admin only)
-     */
-    deleteUser = asyncHandler(async (req: Request, res: Response, next: NextFunction) => {
-        const { id } = req.params;
-        const { softDelete = true } = req.query;
-        await this.adminService.deleteUser(id, req.user!.uid, softDelete === 'true');
-
-        res.status(200).json({
-            success: true,
-            message: 'User deleted successfully'
-        });
+    deleteUser = asyncHandler(async (req: AuthRequest, res: Response, next: NextFunction): Promise<void> => {
+        try {
+            const softDelete = req.query.softDelete !== 'false';
+            await this.adminService.deleteUser(req.params.id, req.user!.uid, softDelete);
+            const response = new ApiResponse(req).success(null, 'User deleted successfully');
+            res.json(response);
+        } catch (err) {
+            logger.error('Delete user controller error:', err);
+            next(err);
+        }
     });
 
-    /**
-     * @desc   Restore user
-     * @route  POST /api/v1/admin/users/:id/restore
-     * @access Private (Admin only)
-     */
-    restoreUser = asyncHandler(async (req: Request, res: Response, next: NextFunction) => {
-        const { id } = req.params;
-        await this.adminService.restoreUser(id, req.user!.uid);
-
-        res.status(200).json({
-            success: true,
-            message: 'User restored successfully'
-        });
+    restoreUser = asyncHandler(async (req: AuthRequest, res: Response, next: NextFunction): Promise<void> => {
+        try {
+            await this.adminService.restoreUser(req.params.id, req.user!.uid);
+            const response = new ApiResponse(req).success(null, 'User restored successfully');
+            res.json(response);
+        } catch (err) {
+            logger.error('Restore user controller error:', err);
+            next(err);
+        }
     });
 
-    /**
-     * @desc   Bulk actions on users
-     * @route  POST /api/v1/admin/users/bulk-action
-     * @access Private (Admin only)
-     */
-    bulkAction = asyncHandler(async (req: Request, res: Response, next: NextFunction) => {
-        const actionData = await validateRequest(BulkActionDto, req.body);
-        const result = await this.adminService.bulkAction(actionData, req.user!.uid);
-
-        res.status(200).json({
-            success: true,
-            message: `Bulk action completed. ${result.success} successful, ${result.failed} failed`,
-            data: result
-        });
+    bulkAction = asyncHandler(async (req: AuthRequest, res: Response, next: NextFunction): Promise<void> => {
+        try {
+            const result = await this.adminService.bulkAction(req.body, req.user!.uid);
+            const response = new ApiResponse(req).success(
+                result,
+                `Bulk action completed. ${result.success} successful, ${result.failed} failed`
+            );
+            res.json(response);
+        } catch (err) {
+            logger.error('Bulk action controller error:', err);
+            next(err);
+        }
     });
 
-    /**
-     * @desc   Export users
-     * @route  POST /api/v1/admin/users/export
-     * @access Private (Admin only)
-     */
-    exportUsers = asyncHandler(async (req: Request, res: Response, next: NextFunction) => {
-        const exportData = await validateRequest(ExportUsersDto, req.body);
-
-        // This would typically generate a file and return a download URL
-        // For now, we'll return a placeholder response
-        res.status(200).json({
-            success: true,
-            message: 'User export initiated',
-            data: {
+    exportUsers = asyncHandler(async (req: AuthRequest, res: Response, next: NextFunction): Promise<void> => {
+        try {
+            // real implementation would stream a file or return a download URL
+            const data = {
                 exportId: `export_${Date.now()}`,
-                format: exportData.format,
-                status: 'processing'
-            }
-        });
-    });
-
-    /**
-     * @desc   Get user statistics
-     * @route  GET /api/v1/admin/stats/users
-     * @access Private (Admin only)
-     */
-    getUserStats = asyncHandler(async (req: Request, res: Response, next: NextFunction) => {
-        const stats = await this.adminService.getUserStats(req.user!.uid);
-
-        res.status(200).json({
-            success: true,
-            data: stats
-        });
-    });
-
-    /**
-     * @desc   Get system statistics
-     * @route  GET /api/v1/admin/stats/system
-     * @access Private (Admin only)
-     */
-    getSystemStats = asyncHandler(async (req: Request, res: Response, next: NextFunction) => {
-        const filter = await validateRequest(SystemStatsFilterDto, req.query);
-        const stats = await this.adminService.getSystemStats(req.user!.uid);
-
-        res.status(200).json({
-            success: true,
-            data: stats
-        });
-    });
-
-    /**
-     * @desc   Get system health
-     * @route  GET /api/v1/admin/health
-     * @access Private (Admin only)
-     */
-    getSystemHealth = asyncHandler(async (req: Request, res: Response, next: NextFunction) => {
-        const options = await validateRequest(SystemHealthDto, req.query);
-
-        // This would check various system components
-        const health = {
-            status: 'healthy',
-            timestamp: new Date().toISOString(),
-            checks: {
-                database: { status: 'healthy', responseTime: 45 },
-                redis: { status: 'healthy', responseTime: 12 },
-                externalServices: {
-                    firebase: { status: 'healthy', responseTime: 89 },
-                    emailService: { status: 'healthy', responseTime: 234 }
-                }
-            }
-        };
-
-        res.status(200).json({
-            success: true,
-            data: health
-        });
-    });
-
-    /**
-     * @desc   Get performance metrics
-     * @route  GET /api/v1/admin/metrics/performance
-     * @access Private (Admin only)
-     */
-    getPerformanceMetrics = asyncHandler(async (req: Request, res: Response, next: NextFunction) => {
-        const filter = await validateRequest(PerformanceMetricsDto, req.query);
-
-        // This would fetch metrics from monitoring service
-        const metrics = {
-            component: filter.component || 'api',
-            metric: filter.metric || 'response_time',
-            data: [
-                { timestamp: new Date().toISOString(), value: 145 },
-                { timestamp: new Date(Date.now() - 3600000).toISOString(), value: 132 },
-                { timestamp: new Date(Date.now() - 7200000).toISOString(), value: 158 }
-            ],
-            average: 145,
-            trend: 'stable'
-        };
-
-        res.status(200).json({
-            success: true,
-            data: metrics
-        });
-    });
-
-    /**
-     * @desc   Get admin audit logs
-     * @route  GET /api/v1/admin/logs
-     * @access Private (Admin only)
-     */
-    getAdminLogs = asyncHandler(async (req: Request, res: Response, next: NextFunction) => {
-        const filter = await validateRequest(AuditLogFilterDto, req.query);
-        const logs = await this.adminService.getAdminLogs(req.user!.uid, filter.limit);
-
-        res.status(200).json({
-            success: true,
-            data: logs
-        });
-    });
-
-    /**
-     * @desc   Get system configuration
-     * @route  GET /api/v1/admin/config
-     * @access Private (Admin only)
-     */
-    getSystemConfig = asyncHandler(async (req: Request, res: Response, next: NextFunction) => {
-        const config = await this.adminService.getSystemConfig(req.user!.uid);
-
-        res.status(200).json({
-            success: true,
-            data: config
-        });
-    });
-
-    /**
-     * @desc   Update system configuration
-     * @route  PATCH /api/v1/admin/config
-     * @access Private (Admin only)
-     */
-    updateSystemConfig = asyncHandler(async (req: Request, res: Response, next: NextFunction) => {
-        const updates = await validateRequest(ConfigUpdateDto, req.body);
-        const updatedConfig = await this.adminService.updateSystemConfig(req.user!.uid, updates);
-
-        res.status(200).json({
-            success: true,
-            message: 'System configuration updated successfully',
-            data: updatedConfig
-        });
-    });
-
-    /**
-     * @desc   Create system backup
-     * @route  POST /api/v1/admin/backup
-     * @access Private (Admin only)
-     */
-    createBackup = asyncHandler(async (req: Request, res: Response, next: NextFunction) => {
-        const { type = 'full' } = req.body;
-
-        // This would trigger a backup process
-        res.status(202).json({
-            success: true,
-            message: 'Backup creation initiated',
-            data: {
-                backupId: `backup_${Date.now()}`,
-                type,
+                format: req.body.format ?? 'csv',
                 status: 'processing',
-                estimatedTime: '10 minutes'
-            }
-        });
+            };
+            const response = new ApiResponse(req).success(data, 'User export initiated');
+            res.json(response);
+        } catch (err) {
+            logger.error('Export users controller error:', err);
+            next(err);
+        }
     });
 
-    /**
-     * @desc   Get backup list
-     * @route  GET /api/v1/admin/backups
-     * @access Private (Admin only)
-     */
-    getBackups = asyncHandler(async (req: Request, res: Response, next: NextFunction) => {
-        // This would return list of available backups
-        const backups = [
-            {
-                id: 'backup_1234567890',
-                type: 'full',
-                size: '2.3 GB',
-                createdAt: new Date(Date.now() - 86400000).toISOString(),
-                status: 'completed'
-            },
-            {
-                id: 'backup_1234567891',
-                type: 'incremental',
-                size: '156 MB',
-                createdAt: new Date(Date.now() - 43200000).toISOString(),
-                status: 'completed'
-            }
-        ];
+    /* =========================================================
+       Statistics
+    ========================================================= */
 
-        res.status(200).json({
-            success: true,
-            data: backups
-        });
+    getUserStats = asyncHandler(async (req: AuthRequest, res: Response, next: NextFunction): Promise<void> => {
+        try {
+            const stats = await this.adminService.getUserStats(req.user!.uid);
+            const response = new ApiResponse(req).success(stats, 'User statistics retrieved');
+            res.json(response);
+        } catch (err) {
+            logger.error('Get user stats controller error:', err);
+            next(err);
+        }
     });
 
-    /**
-     * @desc   Restore from backup
-     * @route  POST /api/v1/admin/restore/:backupId
-     * @access Private (Admin only)
-     */
-    restoreBackup = asyncHandler(async (req: Request, res: Response, next: NextFunction) => {
-        const { backupId } = req.params;
+    getSystemStats = asyncHandler(async (req: AuthRequest, res: Response, next: NextFunction): Promise<void> => {
+        try {
+            const stats = await this.adminService.getSystemStats(req.user!.uid);
+            const response = new ApiResponse(req).success(stats, 'System statistics retrieved');
+            res.json(response);
+        } catch (err) {
+            logger.error('Get system stats controller error:', err);
+            next(err);
+        }
+    });
 
-        // This would trigger a restore process
-        res.status(202).json({
-            success: true,
-            message: 'Restore process initiated',
-            data: {
-                restoreId: `restore_${Date.now()}`,
-                backupId,
-                status: 'processing',
-                estimatedTime: '30 minutes'
-            }
-        });
+    /* =========================================================
+       Health / Metrics
+    ========================================================= */
+
+    getSystemHealth = asyncHandler(async (req: AuthRequest, res: Response, next: NextFunction): Promise<void> => {
+        try {
+            const health = await this.adminService.getSystemHealth();
+            const response = new ApiResponse(req).success(health, 'System health retrieved');
+            res.json(response);
+        } catch (err) {
+            logger.error('Get system health controller error:', err);
+            next(err);
+        }
+    });
+
+    getPerformanceMetrics = asyncHandler(async (req: AuthRequest, res: Response, next: NextFunction): Promise<void> => {
+        try {
+            const metrics = await this.adminService.getPerformanceMetrics(req.query);
+            const response = new ApiResponse(req).success(metrics, 'Performance metrics retrieved');
+            res.json(response);
+        } catch (err) {
+            logger.error('Get performance metrics controller error:', err);
+            next(err);
+        }
+    });
+
+    /* =========================================================
+       Audit & Config
+    ========================================================= */
+
+    getAdminLogs = asyncHandler(async (req: AuthRequest, res: Response, next: NextFunction): Promise<void> => {
+        try {
+            const logs = await this.adminService.getAdminLogs(req.user!.uid, Number(req.query.limit) || 100);
+            const response = new ApiResponse(req).success(logs, 'Admin audit logs retrieved');
+            res.json(response);
+        } catch (err) {
+            logger.error('Get admin logs controller error:', err);
+            next(err);
+        }
+    });
+
+    getSystemConfig = asyncHandler(async (req: AuthRequest, res: Response, next: NextFunction): Promise<void> => {
+        try {
+            const config = await this.adminService.getSystemConfig(req.user!.uid);
+            const response = new ApiResponse(req).success(config, 'System configuration retrieved');
+            res.json(response);
+        } catch (err) {
+            logger.error('Get system config controller error:', err);
+            next(err);
+        }
+    });
+
+    updateSystemConfig = asyncHandler(async (req: AuthRequest, res: Response, next: NextFunction): Promise<void> => {
+        try {
+            const updated = await this.adminService.updateSystemConfig(req.user!.uid, req.body);
+            const response = new ApiResponse(req).success(updated, 'System configuration updated');
+            res.json(response);
+        } catch (err) {
+            logger.error('Update system config controller error:', err);
+            next(err);
+        }
+    });
+
+    /* =========================================================
+       Backups
+    ========================================================= */
+
+    createBackup = asyncHandler(async (req: AuthRequest, res: Response, next: NextFunction): Promise<void> => {
+        try {
+            const job = await this.adminService.initiateBackup(req.body.type ?? 'full', req.user!.uid);
+            const response = new ApiResponse(req).success(job, 'Backup initiated');
+            res.status(202).json(response);
+        } catch (err) {
+            logger.error('Create backup controller error:', err);
+            next(err);
+        }
+    });
+
+    getBackups = asyncHandler(async (req: AuthRequest, res: Response, next: NextFunction): Promise<void> => {
+        try {
+            const list = await this.adminService.listBackups();
+            const response = new ApiResponse(req).success(list, 'Backup list retrieved');
+            res.json(response);
+        } catch (err) {
+            logger.error('Get backups controller error:', err);
+            next(err);
+        }
+    });
+
+    restoreBackup = asyncHandler(async (req: AuthRequest, res: Response, next: NextFunction): Promise<void> => {
+        try {
+            const job = await this.adminService.initiateRestore(req.params.backupId, req.user!.uid);
+            const response = new ApiResponse(req).success(job, 'Restore initiated');
+            res.status(202).json(response);
+        } catch (err) {
+            logger.error('Restore backup controller error:', err);
+            next(err);
+        }
+    });
+
+    /* =========================================================
+       Maintenance
+    ========================================================= */
+
+    toggleMaintenance = asyncHandler(async (req: AuthRequest, res: Response, next: NextFunction): Promise<void> => {
+        try {
+            const updated = await this.adminService.setMaintenanceMode(!!req.body.enable, req.user!.uid);
+            const response = new ApiResponse(req).success(
+                updated,
+                `Maintenance mode ${updated.maintenanceMode ? 'enabled' : 'disabled'}`
+            );
+            res.json(response);
+        } catch (err) {
+            logger.error('Toggle maintenance controller error:', err);
+            next(err);
+        }
     });
 }

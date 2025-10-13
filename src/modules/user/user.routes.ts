@@ -1,9 +1,24 @@
+// src/modules/user/user.routes.ts
 import { Router } from 'express';
 import { container } from 'tsyringe';
 import { UserController } from './user.controller';
-import { authMiddleware } from '../auth/auth.middleware';
-import { validationMiddleware } from '../../shared/middleware/validation.middleware';
+import { authenticate } from '../../shared/middleware/auth.middleware';
+import { validate } from '../../shared/middleware/validation.middleware';
 import { rateLimiter } from '../../shared/middleware/rate-limit.middleware';
+import { 
+    updateProfileValidation,
+    updateSettingsValidation,
+    updatePreferencesValidation,
+    uploadAvatarValidation,
+    getNotificationsValidation,
+    markNotificationReadValidation,
+    revokeSessionValidation,
+    exportDataValidation,
+    deleteAccountValidation,
+    updateSubscriptionValidation,
+    userBulkOperationValidation,
+    toggleTwoFactorValidation
+  } from './user.validations';
 
 const router = Router();
 const userController = container.resolve(UserController);
@@ -16,8 +31,10 @@ const userController = container.resolve(UserController);
  */
 
 // All routes require authentication
-router.use(authMiddleware());
+router.use(authenticate());
+router.use(rateLimiter)
 
+/** 🧍‍♂️ Profile routes */
 /**
  * @swagger
  * /users/profile:
@@ -29,8 +46,6 @@ router.use(authMiddleware());
  *     responses:
  *       200:
  *         description: Profile retrieved successfully
- *       401:
- *         description: Unauthorized
  */
 router.get('/users/profile', userController.getProfile);
 
@@ -64,14 +79,14 @@ router.get('/users/profile', userController.getProfile);
  *     responses:
  *       200:
  *         description: Profile updated successfully
- *       400:
- *         description: Validation error
  */
-router.patch('/users/profile',
-    validationMiddleware(userController.userValidation.updateProfile),
+router.patch(
+    '/users/profile',
+    validate(updateProfileValidation),
     userController.updateProfile
 );
 
+/** ⚙️ Settings routes */
 /**
  * @swagger
  * /users/settings:
@@ -118,11 +133,13 @@ router.get('/users/settings', userController.getSettings);
  *       200:
  *         description: Settings updated successfully
  */
-router.patch('/users/settings',
-    validationMiddleware(userController.userValidation.updateSettings),
+router.patch(
+    '/users/settings',
+    validate(updateSettingsValidation),
     userController.updateSettings
 );
 
+/** 📝 Preferences routes */
 /**
  * @swagger
  * /users/preferences:
@@ -169,11 +186,13 @@ router.get('/users/preferences', userController.getPreferences);
  *       200:
  *         description: Preferences updated successfully
  */
-router.patch('/users/preferences',
-    validationMiddleware(userController.userValidation.updatePreferences),
+router.patch(
+    '/users/preferences',
+    validate(updatePreferencesValidation),
     userController.updatePreferences
 );
 
+/** 🖼 Avatar routes */
 /**
  * @swagger
  * /users/avatar:
@@ -195,12 +214,10 @@ router.patch('/users/preferences',
  *     responses:
  *       200:
  *         description: Avatar uploaded successfully
- *       400:
- *         description: Invalid file format or size
  */
-router.post('/users/avatar',
-    rateLimiter({ windowMs: 15 * 60 * 1000, max: 5 }),
-    validationMiddleware(userController.userValidation.uploadAvatar),
+router.post(
+    '/users/avatar',
+    validate(uploadAvatarValidation),
     userController.uploadAvatar
 );
 
@@ -218,6 +235,7 @@ router.post('/users/avatar',
  */
 router.delete('/users/avatar', userController.removeAvatar);
 
+/** 🔔 Notifications */
 /**
  * @swagger
  * /users/notifications:
@@ -247,8 +265,9 @@ router.delete('/users/avatar', userController.removeAvatar);
  *       200:
  *         description: Notifications retrieved successfully
  */
-router.get('/users/notifications',
-    validationMiddleware(userController.userValidation.getNotifications),
+router.get(
+    '/users/notifications',
+    validate(getNotificationsValidation),
     userController.getNotifications
 );
 
@@ -272,8 +291,9 @@ router.get('/users/notifications',
  *       404:
  *         description: Notification not found
  */
-router.post('/users/notifications/:id/read',
-    validationMiddleware(userController.userValidation.markNotificationRead),
+router.post(
+    '/users/notifications/:id/read',
+    validate(markNotificationReadValidation),
     userController.markNotificationRead
 );
 
@@ -291,6 +311,7 @@ router.post('/users/notifications/:id/read',
  */
 router.post('/users/notifications/read-all', userController.markAllNotificationsRead);
 
+/** 🛡 Sessions */
 /**
  * @swagger
  * /users/sessions:
@@ -325,11 +346,13 @@ router.get('/users/sessions', userController.getSessions);
  *       404:
  *         description: Session not found
  */
-router.delete('/users/sessions/:id',
-    validationMiddleware(userController.userValidation.revokeSession),
+router.delete(
+    '/users/sessions/:id',
+    validate(revokeSessionValidation),
     userController.revokeSession
 );
 
+/** 📦 Data export */
 /**
  * @swagger
  * /users/export-data:
@@ -358,12 +381,13 @@ router.delete('/users/sessions/:id',
  *       429:
  *         description: Too many export requests
  */
-router.post('/users/export-data',
-    rateLimiter({ windowMs: 24 * 60 * 60 * 1000, max: 1 }), // 1 export per day
-    validationMiddleware(userController.userValidation.exportData),
+router.post(
+    '/users/export-data',
+    validate(exportDataValidation),
     userController.exportData
 );
 
+/** ❌ Delete account */
 /**
  * @swagger
  * /users/delete-account:
@@ -398,9 +422,101 @@ router.post('/users/export-data',
  *       401:
  *         description: Unauthorized
  */
-router.delete('/users/delete-account',
-    validationMiddleware(userController.userValidation.deleteAccount),
+router.delete(
+    '/users/delete-account',
+    validate(deleteAccountValidation),
     userController.deleteAccount
+);
+
+/** 💳 Subscription routes */
+/**
+ * @swagger
+ * /users/subscription:
+ *   patch:
+ *     summary: Update user subscription
+ *     tags: [Users]
+ *     security:
+ *       - bearerAuth: []
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             properties:
+ *               plan:
+ *                 type: string
+ *               autoRenew:
+ *                 type: boolean
+ *     responses:
+ *       200:
+ *         description: Subscription updated successfully
+ */
+router.patch(
+    '/users/subscription',
+    validate(updateSubscriptionValidation),
+    userController.updateSubscription
+);
+
+/** 🧩 Bulk user operations */
+/**
+ * @swagger
+ * /users/bulk:
+ *   post:
+ *     summary: Perform bulk user operations
+ *     tags: [Users]
+ *     security:
+ *       - bearerAuth: []
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             properties:
+ *               userIds:
+ *                 type: array
+ *                 items:
+ *                   type: string
+ *               action:
+ *                 type: string
+ *                 enum: [delete, deactivate, activate]
+ *     responses:
+ *       200:
+ *         description: Bulk operation completed successfully
+ */
+router.post(
+    '/users/bulk',
+    validate(userBulkOperationValidation),
+    userController.bulkOperation
+);
+
+/** 🔐 Two-factor authentication toggle */
+/**
+ * @swagger
+ * /users/two-factor:
+ *   patch:
+ *     summary: Enable or disable two-factor authentication
+ *     tags: [Users]
+ *     security:
+ *       - bearerAuth: []
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             properties:
+ *               enable:
+ *                 type: boolean
+ *     responses:
+ *       200:
+ *         description: Two-factor authentication status updated
+ */
+router.patch(
+    '/users/two-factor',
+    validate(toggleTwoFactorValidation),
+    userController.toggleTwoFactor
 );
 
 export default router;
