@@ -93,6 +93,12 @@ export class BadRequestError extends AppError {
     }
 }
 
+export class ForbiddenError extends AppError {
+    constructor(message: string = 'FORBIDDEN', details?: any) {
+        super(message, 403, 'FORBIDDEN', details);
+    }
+}
+
 /**
  * Database errors
  */

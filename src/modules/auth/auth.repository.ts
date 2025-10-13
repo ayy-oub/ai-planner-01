@@ -1,7 +1,11 @@
+// src/modules/auth/auth.repository.ts
 import { SubscriptionStatus, User } from './auth.types';
 import { AppError, ErrorCode } from '../../shared/utils/errors';
 import { logger } from '../../shared/utils/logger';
 import firebaseConnection from '../../infrastructure/database/firebase';
+import { FirebaseService } from '../../shared/services/firebase.service';
+import { injectable, inject } from 'tsyringe';
+
 const firestore = firebaseConnection.getDatabase();
 
 function deepMerge(target: any, source: any): any {
@@ -13,16 +17,47 @@ function deepMerge(target: any, source: any): any {
   return { ...target, ...source };
 }
 
+@injectable()
 export class AuthRepository {
   private collection = firestore.collection('users');
 
+  constructor(
+    @inject('FirebaseService') private firebaseService: FirebaseService
+  ) {}
+
+  /* ------------------------------------------------------------------ */
+  /*  CRUD                                                              */
+  /* ------------------------------------------------------------------ */
+
   async create(userData: Partial<User>): Promise<User> {
     try {
-      const uid = userData.uid || this.collection.doc().id;
+      /* ---------- 1. Hash password (bcrypt, NOT Firebase) ---------- */
+      const plainPassword = (userData as User).password;
+      let hashedPassword: string | undefined;
+      if (plainPassword) {
+        const bcrypt = await import('bcryptjs');
+        hashedPassword = await bcrypt.hash(plainPassword, 12); // 12 rounds
+      }
+  
+      /* ---------- 2. Create in Firebase Auth (if password provided) ---------- */
+      let firebaseUid = userData.uid;
+      if (plainPassword) {
+        const firebaseUser = await this.firebaseService.createUser({
+          email: userData.email!,
+          displayName: userData.displayName,
+          photoURL: userData.photoURL,
+          password: plainPassword, // Firebase hashes internally (scrypt)
+        });
+        firebaseUid = firebaseUser.uid;
+      }
+  
+      /* ---------- 3. Prepare Firestore data (NO password field) ---------- */
+      const uid = firebaseUid || this.collection.doc().id;
       const docRef = this.collection.doc(uid);
-
+  
       const userDataWithDefaults: Partial<User> = {
         ...userData,
+        uid,
         preferences: {
           theme: 'light',
           accentColor: '#3B82F6',
@@ -61,14 +96,18 @@ export class AuthRepository {
           backupCodes: [],
           sessions: [],
           loginHistory: [],
+          password: hashedPassword,
           ...userData.security,
         },
         failedLoginAttempts: 0,
         createdAt: new Date(),
         updatedAt: new Date(),
       };
-
-      await docRef.set(userDataWithDefaults);
+  
+      /* ---------- 4. Strip password before Firestore write ---------- */
+      const { password, ...firestoreData } = userDataWithDefaults;
+  
+      await docRef.set(firestoreData);
       const doc = await docRef.get();
       return { uid: doc.id, ...doc.data() } as User;
     } catch (error: any) {
@@ -125,6 +164,7 @@ export class AuthRepository {
 
   async delete(uid: string): Promise<void> {
     try {
+      await this.firebaseService.deleteUser(uid); // delete from Firebase Auth
       const docRef = this.collection.doc(uid);
       const doc = await docRef.get();
       if (!doc.exists) throw new AppError('User not found', 404, undefined, ErrorCode.USER_NOT_FOUND);
@@ -272,6 +312,26 @@ export class AuthRepository {
     } catch (error: any) {
       logger.error('Failed to find user by password reset token in repository', error, { token });
       throw new AppError('Failed to find user by reset token', 500, undefined, ErrorCode.DATABASE_CONNECTION_ERROR);
+    }
+  }
+
+  /* ------------------------------------------------------------------ */
+  /*  Security Logs                                                     */
+  /* ------------------------------------------------------------------ */
+
+  async getSecurityLogs(userId: string, page: number, limit: number): Promise<any[]> {
+    try {
+      const snapshot = await firestore
+        .collection('security_logs')
+        .where('userId', '==', userId)
+        .orderBy('timestamp', 'desc')
+        .offset((page - 1) * limit)
+        .limit(limit)
+        .get();
+      return snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+    } catch (error) {
+      logger.error('Failed to get security logs', error);
+      return [];
     }
   }
 }

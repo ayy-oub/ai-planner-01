@@ -27,7 +27,7 @@ export class FirebaseService {
 
     private initialized = false;
 
-    private constructor() {
+    constructor() {
         this.initializeApp();
     }
 

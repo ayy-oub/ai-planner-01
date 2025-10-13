@@ -5,6 +5,7 @@ import logger from '../utils/logger';
 import { AppError } from '../utils/errors';
 import { config } from '../config';
 import admin from 'firebase-admin';
+import { SecurityLog } from '../types';
 
 /* ------------------------------------------------------------------ */
 /* Types                                                              */
@@ -243,6 +244,22 @@ export class AuditService {
             status: 'success',
             timestamp: new Date(),
             requestId: context.requestId,
+        });
+    }
+    
+    
+    async logSecurityEvent(securityLog: SecurityLog & { success?: boolean }): Promise<void> {
+        return this.logEvent({
+            action: `SECURITY_${securityLog.event.toUpperCase()}`,
+            resource: 'security',
+            userId: securityLog.userId,
+            userEmail: securityLog.metadata?.userEmail as string | undefined,
+            userRole: securityLog.metadata?.userRole as string | undefined,
+            metadata: securityLog.metadata,
+            ipAddress: securityLog.ip,
+            userAgent: securityLog.userAgent,
+            status: securityLog.success === false ? 'failure' : 'success',
+            timestamp: securityLog.timestamp,
         });
     }
 

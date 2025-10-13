@@ -126,6 +126,10 @@ export interface UserSecurity {
     userAgent?: string;
     location?: string;
   }>;
+  passwordResetToken?: string;
+  passwordResetExpiry?: Date;
+  /* 🔒 Internal use – never exposed via API */
+  password?: string;
 }
 
 /**
@@ -181,8 +185,8 @@ export interface UserProfile {
   };
   pronouns?: string;
   birthday?: Date;
-  timezone: string;
-  language: string;
+  timezone?: string;
+  language?: string;
 }
 
 /**
@@ -209,6 +213,9 @@ export interface User {
   deletedAt?: Date;
   isActive?: boolean;
   isDeleted?: boolean;
+
+  // 🔒 Internal use only – never persisted to Firestore
+  password?: string;
 }
 
 /**
@@ -304,6 +311,7 @@ export interface VerifyEmailDto {
 export interface AuthResponse {
   user: User;
   tokens: AuthTokens;
+  message: string;
 }
 
 export interface RefreshTokenResponse {

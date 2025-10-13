@@ -440,6 +440,113 @@ export class EmailService {
           The AI Planner Team
         `,
       },
+      {
+        name: 'email-verification',
+        subject: 'Verify your email address',
+        html: `
+          <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+            <h1 style="color: #333;">Verify your email address</h1>
+            <p>Hi {{name}},</p>
+            <p>Thanks for signing up! Please verify your email address by clicking the button below:</p>
+            <div style="text-align: center; margin: 30px 0;">
+              <a href="{{verificationUrl}}" style="background-color: #28a745; color: white; padding: 12px 24px; text-decoration: none; border-radius: 4px;">
+                Verify Email
+              </a>
+            </div>
+            <p>If you didn't create an account, you can safely ignore this email.</p>
+            <p>This link will expire in {{expiryHours}} hours.</p>
+            <p>Best regards,<br>The AI Planner Team</p>
+          </div>
+        `,
+        text: `
+          Verify your email address
+  
+          Hi {{name}},
+  
+          Thanks for signing up! Please verify your email address by clicking the link below:
+  
+          {{verificationUrl}}
+  
+          If you didn't create an account, you can safely ignore this email.
+  
+          This link will expire in {{expiryHours}} hours.
+  
+          Best regards,
+          The AI Planner Team
+        `,
+      },
+      {
+        name: 'account-locked',
+        subject: 'Your account has been locked',
+        html: `
+          <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+            <h1 style="color: #333;">Your account has been locked</h1>
+            <p>Hi {{name}},</p>
+            <p>Your account has been locked due to multiple failed login attempts. Please try again later or reset your password.</p>
+            <p>Best regards,<br>The AI Planner Team</p>
+          </div>
+        `,
+        text: `
+          Your account has been locked
+  
+          Hi {{name}},
+  
+          Your account has been locked due to multiple failed login attempts. Please try again later or reset your password.
+  
+          Best regards,
+          The AI Planner Team
+        `,
+      },
+      {
+        name: 'password-change',
+        subject: 'Your password has been changed',
+        html: `
+          <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+            <h1 style="color: #333;">Your password has been changed</h1>
+            <p>Hi {{name}},</p>
+            <p>Your password has been changed successfully.</p>
+            <p>If you didn't initiate this change, please contact support immediately.</p>
+            <p>Best regards,<br>The AI Planner Team</p>
+          </div>
+        `,
+        text: `
+          Your password has been changed
+  
+          Hi {{name}},
+  
+          Your password has been changed successfully.
+  
+          If you didn't initiate this change, please contact support immediately.
+  
+          Best regards,
+          The AI Planner Team
+        `,
+      },
+      {
+        name: 'password-reset-confirmation',
+        subject: 'Your password has been reset',
+        html: `
+          <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+            <h1 style="color: #333;">Your password has been reset</h1>
+            <p>Hi {{name}},</p>
+            <p>Your password has been reset successfully.</p>
+            <p>If you didn't request this change, please contact support immediately.</p>
+            <p>Best regards,<br>The AI Planner Team</p>
+          </div>
+        `,
+        text: `
+          Your password has been reset
+  
+          Hi {{name}},
+  
+          Your password has been reset successfully.
+  
+          If you didn't request this change, please contact support immediately.
+  
+          Best regards,
+          The AI Planner Team
+        `,
+      },
     ];
 
     // Register built-in templates
@@ -750,6 +857,35 @@ export class EmailService {
       verificationUrl,
       expiryHours,
     });
+  }
+
+  /**
+  * Send email verification link
+  */
+  async sendVerificationEmail(to: string, name: string, token: string): Promise<EmailResult> {
+    const verificationUrl = `${config.app.url}/verify-email?token=${token}`;
+    return this.sendTemplate('email-verification', to, { name, verificationUrl });
+  }
+
+  /**
+   * Send account locked notification
+   */
+  async sendAccountLockedEmail(to: string, name: string): Promise<EmailResult> {
+    return this.sendTemplate('account-locked', to, { name });
+  }
+
+  /**
+   * Send password change notification
+   */
+  async sendPasswordChangeNotification(to: string, name: string): Promise<EmailResult> {
+    return this.sendTemplate('password-change', to, { name });
+  }
+
+  /**
+   * Send password reset confirmation
+   */
+  async sendPasswordResetConfirmation(to: string, name: string): Promise<EmailResult> {
+    return this.sendTemplate('password-reset-confirmation', to, { name });
   }
 
   /**

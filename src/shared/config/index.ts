@@ -21,6 +21,8 @@ const configSchema = Joi.object({
     BCRYPT_ROUNDS: Joi.number().min(10).max(20).default(12),
     SESSION_SECRET: Joi.string().min(256).required(),
     API_KEY_SECRET: Joi.string().min(32).required(),
+    LOCKOUT_DURATION_MS: Joi.number().default(15 * 60 * 1000), // 15 minutes
+    
 
     // Firebase
     FIREBASE_PROJECT_ID: Joi.string().required(),
@@ -210,6 +212,8 @@ export const config = {
         apiKeySecret: envVars.API_KEY_SECRET,
         enableHsts: envVars.ENABLE_HSTS,
         enableCsp: envVars.ENABLE_CSP,
+        sessionTimeout: parseInt(process.env.SESSION_TIMEOUT_MS || '1800000', 10), // ✅ 30 min default
+        lockoutDuration: parseInt(envVars.LOCKOUT_DURATION_MS, 10),
     },
 
     firebase: {
