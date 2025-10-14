@@ -1,5 +1,4 @@
 // src/modules/activity/activity.types.ts
-import { Timestamp } from 'firebase-admin/firestore';
 
 export interface Activity {
     id: string;

@@ -1,499 +1,200 @@
-import {
-    Controller,
-    Get,
-    Post,
-    Param,
-    Body,
-    Query,
-    UseGuards,
-    ValidationPipe,
-    UsePipes,
-    HttpCode,
-    HttpStatus,
-    ParseIntPipe,
-    DefaultValuePipe,
-} from '@nestjs/common';
-import {
-    ApiTags,
-    ApiOperation,
-    ApiResponse,
-    ApiBearerAuth,
-    ApiQuery,
-    ApiParam,
-    ApiBody,
-} from '@nestjs/swagger';
+import { Response, NextFunction } from 'express';
+import { injectable, inject } from 'tsyringe';
 import { HealthService } from './health.service';
-import { AuthGuard } from '../../shared/middleware/auth.middleware';
-import { CurrentUser } from '../../shared/decorators/current-user.decorator';
-import { AdminGuard } from '../../shared/middleware/admin.middleware';
-import { HealthStatusResponseDto, HealthReportResponseDto, HealthHistoryResponseDto, HealthAlertsResponseDto } from './dto/health-response.dto';
+import { asyncHandler } from '../../shared/utils/async-handler';
+import { ApiResponse, PaginationInfo } from '../../shared/utils/api-response';
+import { AuthRequest } from '../../modules/auth/auth.types';
+import { logger } from '../../shared/utils/logger';
 
-@ApiTags('Health')
-@Controller('health')
+@injectable()
 export class HealthController {
-    constructor(private readonly healthService: HealthService) { }
+    constructor(@inject('HealthService') private readonly healthService: HealthService) { }
 
-    /**
-     * Get basic health status (no auth required)
-     */
-    @Get()
-    @HttpCode(HttpStatus.OK)
-    @ApiOperation({
-        summary: 'Get basic health status',
-        description: 'Get basic system health status without authentication',
-    })
-    @ApiResponse({
-        status: HttpStatus.OK,
-        description: 'Health status retrieved successfully',
-        type: HealthStatusResponseDto,
-    })
-    @ApiQuery({
-        name: 'detailed',
-        description: 'Include detailed health information',
-        required: false,
-        type: Boolean,
-    })
-    async getHealthStatus(
-        @Query('detailed') detailed?: boolean
-    ): Promise<HealthStatusResponseDto> {
-        const healthStatus = await this.healthService.getHealthStatus(detailed === true);
+    /* =========================================================
+       Basic Health
+    ========================================================= */
+    getHealth = asyncHandler(async (req: AuthRequest, res: Response, next: NextFunction) => {
+        try {
+            const detailed = req.query.detailed === 'true';
+            const status = await this.healthService.getHealthStatus(detailed);
+            res.json(new ApiResponse(req).success(status, 'Health status retrieved successfully'));
+        } catch (err) {
+            logger.error('Get health controller error:', err);
+            next(err);
+        }
+    });
 
-        return {
-            success: true,
-            data: healthStatus,
-        };
-    }
+    getDetailedHealth = asyncHandler(async (req: AuthRequest, res: Response, next: NextFunction) => {
+        try {
+            const report = await this.healthService.getHealthReport();
+            res.json(new ApiResponse(req).success(report, 'Detailed health report retrieved successfully'));
+        } catch (err) {
+            logger.error('Get detailed health controller error:', err);
+            next(err);
+        }
+    });
 
-    /**
-     * Get detailed health report (requires auth)
-     */
-    @Get('report')
-    @HttpCode(HttpStatus.OK)
-    @ApiOperation({
-        summary: 'Get detailed health report',
-        description: 'Get comprehensive health report with system metrics, service status, and recommendations',
-    })
-    @ApiResponse({
-        status: HttpStatus.OK,
-        description: 'Health report retrieved successfully',
-        type: HealthReportResponseDto,
-    })
-    @ApiBearerAuth()
-    @UseGuards(AuthGuard)
-    async getHealthReport(): Promise<HealthReportResponseDto> {
-        const healthReport = await this.healthService.getHealthReport();
+    getReadiness = asyncHandler(async (req: AuthRequest, res: Response, next: NextFunction) => {
+        try {
+            const readiness = await this.healthService.getReadiness();
+            res.json(new ApiResponse(req).success(readiness, 'Readiness status retrieved successfully'));
+        } catch (err) {
+            logger.error('Get readiness controller error:', err);
+            next(err);
+        }
+    });
 
-        return {
-            success: true,
-            data: healthReport,
-        };
-    }
+    getLiveness = asyncHandler(async (req: AuthRequest, res: Response, next: NextFunction) => {
+        try {
+            const liveness = await this.healthService.getLiveness();
+            res.json(new ApiResponse(req).success(liveness, 'Liveness status retrieved successfully'));
+        } catch (err) {
+            logger.error('Get liveness controller error:', err);
+            next(err);
+        }
+    });
 
-    /**
-     * Get health history (requires auth)
-     */
-    @Get('history')
-    @HttpCode(HttpStatus.OK)
-    @ApiOperation({
-        summary: 'Get health history',
-        description: 'Get historical health data for a specified time period',
-    })
-    @ApiResponse({
-        status: HttpStatus.OK,
-        description: 'Health history retrieved successfully',
-        type: HealthHistoryResponseDto,
-        isArray: true,
-    })
-    @ApiQuery({
-        name: 'startDate',
-        description: 'Start date for history (ISO format)',
-        required: true,
-        example: '2024-01-01',
-    })
-    @ApiQuery({
-        name: 'endDate',
-        description: 'End date for history (ISO format)',
-        required: true,
-        example: '2024-01-31',
-    })
-    @ApiQuery({
-        name: 'service',
-        description: 'Filter by specific service',
-        required: false,
-        example: 'database',
-    })
-    @ApiQuery({
-        name: 'limit',
-        description: 'Number of records to return',
-        required: false,
-        type: Number,
-    })
-    @ApiQuery({
-        name: 'offset',
-        description: 'Number of records to skip',
-        required: false,
-        type: Number,
-    })
-    @ApiBearerAuth()
-    @UseGuards(AuthGuard)
-    async getHealthHistory(
-        @Query('startDate') startDate: string,
-        @Query('endDate') endDate: string,
-        @Query('service') service?: string,
-        @Query('limit', new DefaultValuePipe(50), ParseIntPipe) limit?: number,
-        @Query('offset', new DefaultValuePipe(0), ParseIntPipe) offset?: number,
-        @CurrentUser() user: any
-    ): Promise<any> {
-        const history = await this.healthService.getHealthHistory(
-            new Date(startDate),
-            new Date(endDate),
-            service
-        );
+    getMetrics = asyncHandler(async (req: AuthRequest, res: Response, next: NextFunction) => {
+        try {
+            const metrics = await this.healthService.getSystemMetrics();
+            res.json(new ApiResponse(req).success(metrics, 'System metrics retrieved successfully'));
+        } catch (err) {
+            logger.error('Get metrics controller error:', err);
+            next(err);
+        }
+    });
 
-        // Apply pagination
-        const paginatedHistory = history.slice(offset, offset + limit);
+    /* =========================================================
+       Health History & Reports
+    ========================================================= */
+    getHistory = asyncHandler(async (req: AuthRequest, res: Response, next: NextFunction) => {
+        try {
+            const { startDate, endDate, service, limit = 50, offset = 0 } = req.query as any;
+            const history = await this.healthService.getHealthHistory(
+                new Date(startDate),
+                new Date(endDate),
+                service
+            );
+            const paginated = history.slice(offset, offset + limit);
+            const page = Math.floor(offset / limit) + 1;
+            const totalPages = Math.ceil(history.length / limit);
+            const hasNext = page < totalPages;
+            const hasPrev = page > 1;
 
-        return {
-            success: true,
-            data: paginatedHistory,
-            metadata: {
+            const pagination: PaginationInfo = {
+                page,
+                limit,
                 total: history.length,
+                pages: totalPages,
+                hasNext,
+                hasPrev,
+            };
+
+            res.json(new ApiResponse(req).paginated(paginated, pagination));
+
+
+        } catch (err) {
+            logger.error('Get health history controller error:', err);
+            next(err);
+        }
+    });
+
+    /* =========================================================
+       Health Alerts
+    ========================================================= */
+    getAlerts = asyncHandler(async (req: AuthRequest, res: Response, next: NextFunction) => {
+        try {
+            const { acknowledged, resolved, severity, limit = 20, offset = 0 } = req.query as any;
+            const alerts = await this.healthService.getHealthAlerts(
+                acknowledged,
+                resolved,
+                severity
+            );
+            const paginated = alerts.slice(offset, offset + limit);
+            const page = Math.floor(offset / limit) + 1;
+            const totalPages = Math.ceil(alerts.length / limit);
+            const hasNext = page < totalPages;
+            const hasPrev = page > 1;
+
+            const pagination: PaginationInfo = {
+                page,
                 limit,
-                offset,
-            },
-        };
-    }
-
-    /**
-     * Get health alerts (requires auth)
-     */
-    @Get('alerts')
-    @HttpCode(HttpStatus.OK)
-    @ApiOperation({
-        summary: 'Get health alerts',
-        description: 'Get health alerts with optional filtering by status, resolution, and severity',
-    })
-    @ApiResponse({
-        status: HttpStatus.OK,
-        description: 'Health alerts retrieved successfully',
-        type: HealthAlertsResponseDto,
-        isArray: true,
-    })
-    @ApiQuery({
-        name: 'acknowledged',
-        description: 'Filter by acknowledgment status',
-        required: false,
-        type: Boolean,
-    })
-    @ApiQuery({
-        name: 'resolved',
-        description: 'Filter by resolution status',
-        required: false,
-        type: Boolean,
-    })
-    @ApiQuery({
-        name: 'severity',
-        description: 'Filter by severity level',
-        required: false,
-        enum: ['low', 'medium', 'high', 'critical'],
-    })
-    @ApiQuery({
-        name: 'limit',
-        description: 'Number of alerts to return',
-        required: false,
-        type: Number,
-    })
-    @ApiQuery({
-        name: 'offset',
-        description: 'Number of alerts to skip',
-        required: false,
-        type: Number,
-    })
-    @ApiBearerAuth()
-    @UseGuards(AuthGuard)
-    async getHealthAlerts(
-        @Query('acknowledged') acknowledged?: boolean,
-        @Query('resolved') resolved?: boolean,
-        @Query('severity') severity?: string,
-        @Query('limit', new DefaultValuePipe(20), ParseIntPipe) limit?: number,
-        @Query('offset', new DefaultValuePipe(0), ParseIntPipe) offset?: number,
-        @CurrentUser() user: any
-    ): Promise<any> {
-        const alerts = await this.healthService.getHealthAlerts(
-            acknowledged,
-            resolved,
-            severity
-        );
-
-        // Apply pagination
-        const paginatedAlerts = alerts.slice(offset, offset + limit);
-
-        return {
-            success: true,
-            data: paginatedAlerts,
-            metadata: {
                 total: alerts.length,
-                limit,
-                offset,
-            },
-        };
-    }
+                pages: totalPages,
+                hasNext,
+                hasPrev,
+            };
 
-    /**
-     * Acknowledge health alert (requires auth)
-     */
-    @Post('alerts/:alertId/acknowledge')
-    @HttpCode(HttpStatus.OK)
-    @ApiOperation({
-        summary: 'Acknowledge health alert',
-        description: 'Mark a health alert as acknowledged',
-    })
-    @ApiResponse({
-        status: HttpStatus.OK,
-        description: 'Alert acknowledged successfully',
-        schema: {
-            type: 'object',
-            properties: {
-                success: { type: 'boolean' },
-                message: { type: 'string' },
-            },
-        },
-    })
-    @ApiResponse({
-        status: HttpStatus.NOT_FOUND,
-        description: 'Alert not found',
-    })
-    @ApiParam({
-        name: 'alertId',
-        description: 'Alert ID',
-        example: 'alert_123abc',
-    })
-    @ApiBearerAuth()
-    @UseGuards(AuthGuard)
-    async acknowledgeAlert(
-        @Param('alertId') alertId: string,
-        @CurrentUser() user: any
-    ): Promise<any> {
-        await this.healthService.acknowledgeAlert(alertId, user.uid);
+            res.json(new ApiResponse(req).paginated(paginated, pagination));
 
-        return {
-            success: true,
-            message: 'Alert acknowledged successfully',
-        };
-    }
+        } catch (err) {
+            logger.error('Get health alerts controller error:', err);
+            next(err);
+        }
+    });
 
-    /**
-     * Resolve health alert (requires auth)
-     */
-    @Post('alerts/:alertId/resolve')
-    @HttpCode(HttpStatus.OK)
-    @ApiOperation({
-        summary: 'Resolve health alert',
-        description: 'Mark a health alert as resolved',
-    })
-    @ApiResponse({
-        status: HttpStatus.OK,
-        description: 'Alert resolved successfully',
-        schema: {
-            type: 'object',
-            properties: {
-                success: { type: 'boolean' },
-                message: { type: 'string' },
-            },
-        },
-    })
-    @ApiResponse({
-        status: HttpStatus.NOT_FOUND,
-        description: 'Alert not found',
-    })
-    @ApiParam({
-        name: 'alertId',
-        description: 'Alert ID',
-        example: 'alert_123abc',
-    })
-    @ApiBearerAuth()
-    @UseGuards(AuthGuard)
-    async resolveAlert(
-        @Param('alertId') alertId: string,
-        @CurrentUser() user: any
-    ): Promise<any> {
-        await this.healthService.resolveAlert(alertId, user.uid);
+    acknowledgeAlert = asyncHandler(async (req: AuthRequest, res: Response, next: NextFunction) => {
+        try {
+            const { alertId } = req.params;
+            await this.healthService.acknowledgeAlert(alertId, req.user!.uid);
+            res.json(new ApiResponse(req).success(null, 'Alert acknowledged successfully'));
+        } catch (err) {
+            logger.error('Acknowledge alert controller error:', err);
+            next(err);
+        }
+    });
 
-        return {
-            success: true,
-            message: 'Alert resolved successfully',
-        };
-    }
+    resolveAlert = asyncHandler(async (req: AuthRequest, res: Response, next: NextFunction) => {
+        try {
+            const { alertId } = req.params;
+            await this.healthService.resolveAlert(alertId, req.user!.uid);
+            res.json(new ApiResponse(req).success(null, 'Alert resolved successfully'));
+        } catch (err) {
+            logger.error('Resolve alert controller error:', err);
+            next(err);
+        }
+    });
 
-    /**
-     * Get system metrics (requires auth)
-     */
-    @Get('metrics')
-    @HttpCode(HttpStatus.OK)
-    @ApiOperation({
-        summary: 'Get system metrics',
-        description: 'Get detailed system metrics including memory, CPU, disk, and network usage',
-    })
-    @ApiResponse({
-        status: HttpStatus.OK,
-        description: 'System metrics retrieved successfully',
-        schema: {
-            type: 'object',
-            properties: {
-                success: { type: 'boolean' },
-                data: { type: 'object' },
-            },
-        },
-    })
-    @ApiBearerAuth()
-    @UseGuards(AuthGuard)
-    async getSystemMetrics(): Promise<any> {
-        const metrics = await this.healthService.getSystemMetrics();
+    /* =========================================================
+       Run Health Check
+    ========================================================= */
+    runCheck = asyncHandler(async (req: AuthRequest, res: Response, next: NextFunction) => {
+        try {
+            const { checkName } = req.params;
+            const result = await this.healthService.runHealthCheck(checkName);
+            res.json(new ApiResponse(req).success(result, 'Health check executed successfully'));
+        } catch (err) {
+            logger.error('Run health check controller error:', err);
+            next(err);
+        }
+    });
 
-        return {
-            success: true,
-            data: metrics,
-        };
-    }
+    /* =========================================================
+       Health Stats (admin)
+    ========================================================= */
+    getStats = asyncHandler(async (req: AuthRequest, res: Response, next: NextFunction) => {
+        try {
+            const { startDate, endDate } = req.query as any;
+            const stats = await this.healthService.getHealthStats(new Date(startDate), new Date(endDate));
+            res.json(new ApiResponse(req).success(stats, 'Health stats retrieved successfully'));
+        } catch (err) {
+            logger.error('Get health stats controller error:', err);
+            next(err);
+        }
+    });
 
-    /**
-     * Run specific health check (requires auth)
-     */
-    @Post('checks/:checkName')
-    @HttpCode(HttpStatus.OK)
-    @ApiOperation({
-        summary: 'Run specific health check',
-        description: 'Run a specific health check by name',
-    })
-    @ApiResponse({
-        status: HttpStatus.OK,
-        description: 'Health check completed successfully',
-        schema: {
-            type: 'object',
-            properties: {
-                success: { type: 'boolean' },
-                data: { type: 'object' },
-            },
-        },
-    })
-    @ApiResponse({
-        status: HttpStatus.NOT_FOUND,
-        description: 'Health check not found',
-    })
-    @ApiParam({
-        name: 'checkName',
-        description: 'Name of the health check to run',
-        example: 'database',
-    })
-    @ApiBearerAuth()
-    @UseGuards(AuthGuard)
-    async runHealthCheck(
-        @Param('checkName') checkName: string,
-        @CurrentUser() user: any
-    ): Promise<any> {
-        const result = await this.healthService.runHealthCheck(checkName);
-
-        return {
-            success: true,
-            data: result,
-        };
-    }
-
-    /**
-     * Get health statistics (admin only)
-     */
-    @Get('stats')
-    @HttpCode(HttpStatus.OK)
-    @ApiOperation({
-        summary: 'Get health statistics',
-        description: 'Get health statistics and trends (admin only)',
-    })
-    @ApiResponse({
-        status: HttpStatus.OK,
-        description: 'Health statistics retrieved successfully',
-        schema: {
-            type: 'object',
-            properties: {
-                success: { type: 'boolean' },
-                data: { type: 'object' },
-            },
-        },
-    })
-    @ApiQuery({
-        name: 'startDate',
-        description: 'Start date for statistics',
-        required: true,
-        example: '2024-01-01',
-    })
-    @ApiQuery({
-        name: 'endDate',
-        description: 'End date for statistics',
-        required: true,
-        example: '2024-01-31',
-    })
-    @ApiBearerAuth()
-    @UseGuards(AuthGuard, AdminGuard)
-    async getHealthStats(
-        @Query('startDate') startDate: string,
-        @Query('endDate') endDate: string,
-        @CurrentUser() user: any
-    ): Promise<any> {
-        const stats = await this.healthService.getHealthStats(
-            new Date(startDate),
-            new Date(endDate)
-        );
-
-        return {
-            success: true,
-            data: stats,
-        };
-    }
-
-    /**
-     * Register custom health check (admin only)
-     */
-    @Post('checks')
-    @HttpCode(HttpStatus.CREATED)
-    @ApiOperation({
-        summary: 'Register custom health check',
-        description: 'Register a custom health check function (admin only)',
-    })
-    @ApiResponse({
-        status: HttpStatus.CREATED,
-        description: 'Health check registered successfully',
-        schema: {
-            type: 'object',
-            properties: {
-                success: { type: 'boolean' },
-                message: { type: 'string' },
-            },
-        },
-    })
-    @ApiBody({
-        description: 'Health check registration data',
-        schema: {
-            type: 'object',
-            properties: {
-                name: { type: 'string', example: 'custom-service' },
-                description: { type: 'string', example: 'Custom service health check' },
-                endpoint: { type: 'string', example: 'https://api.example.com/health' },
-                timeout: { type: 'number', example: 5000 },
-                retries: { type: 'number', example: 3 },
-            },
-        },
-    })
-    @ApiBearerAuth()
-    @UseGuards(AuthGuard, AdminGuard)
-    async registerHealthCheck(
-        @Body() checkData: any,
-        @CurrentUser() user: any
-    ): Promise<any> {
-        // In a real implementation, you would store and manage custom health checks
-        // For now, we'll just acknowledge the registration
-
-        return {
-            success: true,
-            message: `Health check '${checkData.name}' registered successfully`,
-        };
-    }
+    /* =========================================================
+       Register Custom Health Check (admin)
+    ========================================================= */
+    registerCheck = asyncHandler(async (req: AuthRequest, res: Response, next: NextFunction) => {
+        try {
+            const checkData = req.body;
+            // optionally store in service for custom checks
+            await this.healthService.registerCustomCheck(checkData);
+            res.json(new ApiResponse(req).success(null, `Health check '${checkData.name}' registered successfully`));
+        } catch (err) {
+            logger.error('Register custom check controller error:', err);
+            next(err);
+        }
+    });
 }

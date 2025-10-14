@@ -162,6 +162,11 @@ export class CacheService {
         return value;
     }
 
+    async ping(): Promise<'PONG'> {
+        // this.client is the ioredis instance
+        return this.redis.ping();
+      }
+
     /**
      * Set value in cache
      */

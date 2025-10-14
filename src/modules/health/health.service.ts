@@ -1,4 +1,5 @@
-import { Injectable, Logger } from '@nestjs/common';
+// src/modules/health/health.service.ts
+import { Injectable, Logger, OnModuleDestroy } from '@nestjs/common';
 import { HealthRepository } from './health.repository';
 import { CacheService } from '../../shared/services/cache.service';
 import {
@@ -14,918 +15,607 @@ import {
     HealthHistory,
     SystemMetrics,
     HealthReport,
-    HealthThresholds
+    HealthThresholds,
 } from './health.types';
 import { FirebaseService } from '../../shared/services/firebase.service';
-import { Redis } from 'ioredis';
 import { logger } from '../../shared/utils/logger';
-import { v4 as uuidv4 } from 'uuid';
-import { format, subDays, addMinutes } from 'date-fns';
+const { v4: uuidv4 } = require('uuid');
+import { subDays, addMinutes } from 'date-fns';
 import * as os from 'os';
 import * as process from 'process';
 
 @Injectable()
-export class HealthService {
-    private readonly logger = new Logger(HealthService.name);
+export class HealthService implements OnModuleDestroy {
+
     private readonly healthThresholds: HealthThresholds = {
         responseTime: { warning: 1000, critical: 5000 },
         errorRate: { warning: 0.05, critical: 0.1 },
         availability: { warning: 0.95, critical: 0.9 },
         memoryUsage: { warning: 0.8, critical: 0.9 },
-        cpuUsage: { warning: 0.8, critical: 0.9 }
+        cpuUsage: { warning: 0.8, critical: 0.9 },
     };
 
-    private healthChecks: Map<string, () => Promise<HealthCheckResult>> = new Map();
-    private systemStartTime: number = Date.now();
-    private healthCheckInterval: NodeJS.Timeout;
+    private healthChecks = new Map<string, () => Promise<HealthCheckResult>>();
+    private systemStartTime = Date.now();
+    private healthCheckInterval?: NodeJS.Timeout;
 
     constructor(
         private readonly healthRepository: HealthRepository,
         private readonly cacheService: CacheService,
-        private readonly firebaseService: FirebaseService
+        private readonly firebaseService: FirebaseService,
     ) {
         this.initializeHealthChecks();
         this.startHealthMonitoring();
     }
 
-    /**
-     * Get overall health status
-     */
-    async getHealthStatus(detailed: boolean = false): Promise<HealthStatus> {
-        const startTime = Date.now();
+    /* ------------------------------------------------------------------ */
+    /*  Public API  –  exactly what the controller calls                    */
+    /* ------------------------------------------------------------------ */
 
-        try {
-            // Run all health checks
-            const checks = await this.runAllHealthChecks();
-
-            // Determine overall status
-            const overallStatus = this.calculateOverallStatus(checks);
-
-            const healthStatus: HealthStatus = {
-                status: overallStatus,
-                timestamp: new Date(),
-                checks,
-                metadata: {
-                    version: process.env.npm_package_version || '1.0.0',
-                    environment: process.env.NODE_ENV || 'development',
-                    region: process.env.REGION || 'unknown',
-                    uptime: Date.now() - this.systemStartTime,
-                    memoryUsage: this.getMemoryUsage(),
-                    cpuUsage: this.getCPUUsage()
-                }
-            };
-
-            // Cache the result
-            await this.cacheService.set('health:status', healthStatus, 60); // 1 minute cache
-
-            // Save to history if detailed
-            if (detailed) {
-                await this.saveHealthHistory(healthStatus);
-            }
-
-            return healthStatus;
-        } catch (error) {
-            logger.error('Error getting health status:', error);
-            throw error;
-        }
+    async getHealthStatus(detailed = false): Promise<HealthStatus> {
+        return this.buildHealthStatus(detailed);
     }
 
-    /**
-     * Get detailed health report
-     */
     async getHealthReport(): Promise<HealthReport> {
-        try {
-            const [
-                systemMetrics,
-                databaseHealth,
-                cacheHealth,
-                externalServices,
-                queues
-            ] = await Promise.all([
-                this.getSystemMetrics(),
-                this.checkDatabaseHealth(),
-                this.checkCacheHealth(),
-                this.checkExternalServices(),
-                this.checkQueues()
-            ]);
-
-            const healthStatus = await this.getHealthStatus(true);
-
-            // Generate recommendations
-            const recommendations = this.generateRecommendations({
-                systemMetrics,
-                databaseHealth,
-                cacheHealth,
-                externalServices,
-                queues,
-                checks: healthStatus.checks
-            });
-
-            // Check for alerts
-            const alerts = await this.checkForAlerts({
-                systemMetrics,
-                databaseHealth,
-                cacheHealth,
-                externalServices,
-                queues
-            });
-
-            const report: HealthReport = {
-                id: uuidv4(),
-                timestamp: new Date(),
-                overallStatus: healthStatus.status,
-                systemMetrics,
-                databaseHealth,
-                cacheHealth,
-                externalServices,
-                queues,
-                checks: healthStatus.checks,
-                alerts,
-                recommendations,
-                nextCheck: addMinutes(new Date(), 5)
-            };
-
-            // Save report
-            await this.healthRepository.saveHealthReport(report);
-
-            return report;
-        } catch (error) {
-            logger.error('Error generating health report:', error);
-            throw error;
-        }
+        return this.buildHealthReport();
     }
 
-    /**
-     * Get health history
-     */
     async getHealthHistory(
         startDate: Date,
         endDate: Date,
-        service?: string
+        service?: string,
     ): Promise<HealthHistory[]> {
-        try {
-            return await this.healthRepository.getHealthHistory(startDate, endDate, service);
-        } catch (error) {
-            logger.error('Error retrieving health history:', error);
-            throw error;
-        }
+        return this.healthRepository.getHealthHistory(startDate, endDate, service);
     }
 
-    /**
-     * Get health alerts
-     */
     async getHealthAlerts(
         acknowledged?: boolean,
         resolved?: boolean,
-        severity?: string
+        severity?: string,
     ): Promise<HealthAlert[]> {
-        try {
-            return await this.healthRepository.getHealthAlerts(acknowledged, resolved, severity);
-        } catch (error) {
-            logger.error('Error retrieving health alerts:', error);
-            throw error;
-        }
+        return this.healthRepository.getHealthAlerts(acknowledged, resolved, severity);
     }
 
-    /**
-     * Acknowledge health alert
-     */
     async acknowledgeAlert(alertId: string, userId: string): Promise<void> {
-        try {
-            await this.healthRepository.updateAlert(alertId, {
-                acknowledged: true,
-                acknowledgedBy: userId,
-                acknowledgedAt: new Date()
-            });
-        } catch (error) {
-            logger.error('Error acknowledging alert:', error);
-            throw error;
-        }
+        await this.healthRepository.updateAlert(alertId, {
+            acknowledged: true,
+            acknowledgedBy: userId,
+            acknowledgedAt: new Date(),
+        });
     }
 
-    /**
-     * Resolve health alert
-     */
     async resolveAlert(alertId: string, userId: string): Promise<void> {
-        try {
-            await this.healthRepository.updateAlert(alertId, {
-                resolved: true,
-                resolvedBy: userId,
-                resolvedAt: new Date()
-            });
-        } catch (error) {
-            logger.error('Error resolving alert:', error);
-            throw error;
-        }
+        await this.healthRepository.updateAlert(alertId, {
+            resolved: true,
+            resolvedBy: userId,
+            resolvedAt: new Date(),
+        });
     }
 
-    /**
-     * Get system metrics
-     */
-    async getSystemMetrics(): Promise<SystemMetrics> {
-        try {
-            const totalMemory = os.totalmem();
-            const freeMemory = os.freemem();
-            const usedMemory = totalMemory - freeMemory;
-
-            const cpus = os.cpus();
-            const avgCpuUsage = cpus.reduce((acc, cpu) => {
-                const times = cpu.times;
-                const total = Object.values(times).reduce((a, b) => a + b, 0);
-                const idle = times.idle;
-                return acc + ((total - idle) / total * 100);
-            }, 0) / cpus.length;
-
-            const networkInterfaces = os.networkInterfaces();
-            const interfaces: any[] = [];
-
-            Object.keys(networkInterfaces).forEach(name => {
-                const nets = networkInterfaces[name];
-                nets.forEach(net => {
-                    interfaces.push({
-                        name,
-                        address: net.address,
-                        netmask: net.netmask,
-                        family: net.family,
-                        mac: net.mac,
-                        internal: net.internal,
-                        cidr: net.cidr
-                    });
-                });
-            });
-
-            return {
-                uptime: os.uptime() * 1000, // Convert to milliseconds
-                memory: {
-                    used: usedMemory,
-                    total: totalMemory,
-                    free: freeMemory,
-                    percentage: usedMemory / totalMemory
-                },
-                cpu: {
-                    usage: avgCpuUsage,
-                    loadAverage: os.loadavg(),
-                    cores: cpus.length
-                },
-                disk: await this.getDiskUsage(),
-                network: {
-                    interfaces,
-                    stats: await this.getNetworkStats()
-                },
-                process: {
-                    pid: process.pid,
-                    version: process.version,
-                    nodeVersion: process.versions.node,
-                    platform: process.platform,
-                    arch: process.arch,
-                    argv: process.argv,
-                    execPath: process.execPath,
-                    execArgv: process.execArgv
-                }
-            };
-        } catch (error) {
-            logger.error('Error getting system metrics:', error);
-            throw error;
-        }
-    }
-
-    /**
-     * Run specific health check
-     */
     async runHealthCheck(name: string): Promise<HealthCheckResult> {
-        const checkFunction = this.healthChecks.get(name);
-        if (!checkFunction) {
-            throw new Error(`Health check '${name}' not found`);
-        }
-
-        const startTime = Date.now();
+        const fn = this.healthChecks.get(name);
+        if (!fn) throw new Error(`Health-check '${name}' not found`);
+        const start = Date.now();
         try {
-            const result = await checkFunction();
-            return {
-                ...result,
-                duration: Date.now() - startTime,
-                timestamp: new Date()
-            };
-        } catch (error) {
+            const r = await fn();
+            return { ...r, duration: Date.now() - start, timestamp: new Date() };
+        } catch (err: any) {
             return {
                 name,
                 status: 'unhealthy',
-                message: error.message,
-                duration: Date.now() - startTime,
+                message: err.message,
+                duration: Date.now() - start,
                 timestamp: new Date(),
-                error
+                error: err,
             };
         }
     }
 
-    /**
-     * Register custom health check
-     */
-    registerHealthCheck(
-        name: string,
-        checkFunction: () => Promise<HealthCheckResult>,
-        options?: HealthCheckOptions
-    ): void {
-        this.healthChecks.set(name, checkFunction);
-        logger.info(`Health check registered: ${name}`);
+    async getSystemMetrics(): Promise<SystemMetrics> {
+        return this.buildSystemMetrics();
     }
 
-    /**
-     * Initialize default health checks
-     */
-    private initializeHealthChecks(): void {
-        // Database health check
-        this.registerHealthCheck('database', async () => {
-            const startTime = Date.now();
-            try {
-                const db = this.firebaseService.getFirestore();
-                const testDoc = db.collection('health').doc('test');
+    /* ===== NEW METHODS REQUIRED BY CONTROLLER ===== */
 
-                // Write test
-                await testDoc.set({ timestamp: new Date() });
-
-                // Read test
-                const doc = await testDoc.get();
-
-                if (!doc.exists) {
-                    throw new Error('Database read test failed');
-                }
-
-                // Cleanup
-                await testDoc.delete();
-
-                const duration = Date.now() - startTime;
-
-                return {
-                    name: 'database',
-                    status: duration > this.healthThresholds.responseTime.critical ? 'degraded' : 'healthy',
-                    message: `Database is responsive (${duration}ms)`,
-                    data: {
-                        responseTime: duration,
-                        timestamp: new Date()
-                    }
-                };
-            } catch (error) {
-                return {
-                    name: 'database',
-                    status: 'unhealthy',
-                    message: 'Database connection failed',
-                    error
-                };
-            }
-        });
-
-        // Cache health check
-        this.registerHealthCheck('cache', async () => {
-            const startTime = Date.now();
-            try {
-                // Test cache write
-                const testKey = 'health:cache:test';
-                await this.cacheService.set(testKey, 'test', 60);
-
-                // Test cache read
-                const value = await this.cacheService.get(testKey);
-
-                if (value !== 'test') {
-                    throw new Error('Cache read test failed');
-                }
-
-                // Cleanup
-                await this.cacheService.delete(testKey);
-
-                const duration = Date.now() - startTime;
-
-                return {
-                    name: 'cache',
-                    status: duration > 100 ? 'degraded' : 'healthy',
-                    message: `Cache is responsive (${duration}ms)`,
-                    data: {
-                        responseTime: duration,
-                        timestamp: new Date()
-                    }
-                };
-            } catch (error) {
-                return {
-                    name: 'cache',
-                    status: 'unhealthy',
-                    message: 'Cache connection failed',
-                    error
-                };
-            }
-        });
-
-        // Memory health check
-        this.registerHealthCheck('memory', async () => {
-            const memoryUsage = this.getMemoryUsage();
-            const percentage = memoryUsage.percentage;
-
-            let status: 'healthy' | 'degraded' | 'unhealthy';
-            let message: string;
-
-            if (percentage >= this.healthThresholds.memoryUsage.critical) {
-                status = 'unhealthy';
-                message = `Memory usage is critically high (${Math.round(percentage * 100)}%)`;
-            } else if (percentage >= this.healthThresholds.memoryUsage.warning) {
-                status = 'degraded';
-                message = `Memory usage is high (${Math.round(percentage * 100)}%)`;
-            } else {
-                status = 'healthy';
-                message = `Memory usage is normal (${Math.round(percentage * 100)}%)`;
-            }
-
-            return {
-                name: 'memory',
-                status,
-                message,
-                data: memoryUsage
-            };
-        });
-
-        // CPU health check
-        this.registerHealthCheck('cpu', async () => {
-            const cpuUsage = this.getCPUUsage();
-            const percentage = cpuUsage.usage;
-
-            let status: 'healthy' | 'degraded' | 'unhealthy';
-            let message: string;
-
-            if (percentage >= this.healthThresholds.cpuUsage.critical) {
-                status = 'unhealthy';
-                message = `CPU usage is critically high (${Math.round(percentage)}%)`;
-            } else if (percentage >= this.healthThresholds.cpuUsage.warning) {
-                status = 'degraded';
-                message = `CPU usage is high (${Math.round(percentage)}%)`;
-            } else {
-                status = 'healthy';
-                message = `CPU usage is normal (${Math.round(percentage)}%)`;
-            }
-
-            return {
-                name: 'cpu',
-                status,
-                message,
-                data: cpuUsage
-            };
-        });
-
-        // External services health check
-        this.registerHealthCheck('external-services', async () => {
-            const services = [
-                { name: 'firebase', url: 'https://firebase.google.com' },
-                { name: 'redis', check: async () => this.cacheService.ping() }
-            ];
-
-            const results = await Promise.allSettled(
-                services.map(async (service) => {
-                    if (service.check) {
-                        return { name: service.name, result: await service.check() };
-                    } else {
-                        // Simple HTTP check
-                        return { name: service.name, result: 'ok' };
-                    }
-                })
-            );
-
-            const failedServices = results.filter(r => r.status === 'rejected');
-
-            return {
-                name: 'external-services',
-                status: failedServices.length > 0 ? 'degraded' : 'healthy',
-                message: failedServices.length > 0
-                    ? `${failedServices.length} external services are unhealthy`
-                    : 'All external services are healthy',
-                data: {
-                    total: services.length,
-                    healthy: results.filter(r => r.status === 'fulfilled').length,
-                    failed: failedServices.length
-                }
-            };
-        });
+    async getReadiness(): Promise<{ ready: boolean; timestamp: Date }> {
+        // simplest: if we can reach DB & Cache we are ready
+        const [db, cache] = await Promise.allSettled([
+            this.firebaseService.getFirestore().collection('health').limit(1).get(),
+            this.cacheService.ping(),
+        ]);
+        return {
+            ready: db.status === 'fulfilled' && cache.status === 'fulfilled',
+            timestamp: new Date(),
+        };
     }
 
-    /**
-     * Run all health checks
-     */
-    private async runAllHealthChecks(): Promise<HealthCheck[]> {
-        const checks: HealthCheck[] = [];
+    async getLiveness(): Promise<{ alive: boolean; timestamp: Date; uptime: number }> {
+        return {
+            alive: true,
+            timestamp: new Date(),
+            uptime: Date.now() - this.systemStartTime,
+        };
+    }
 
-        for (const [name, checkFunction] of this.healthChecks) {
-            try {
-                const result = await this.runHealthCheck(name);
-                checks.push({
-                    name: result.name,
-                    status: result.status,
-                    message: result.message,
-                    duration: result.duration,
-                    timestamp: result.timestamp,
-                    metadata: result.data,
-                    error: result.error
-                });
-            } catch (error) {
-                checks.push({
-                    name,
-                    status: 'unhealthy',
-                    message: error.message,
-                    duration: 0,
-                    timestamp: new Date(),
-                    error
-                });
-            }
+    async getHealthStats(startDate: Date, endDate: Date): Promise<any> {
+        // Re-use history; aggregate on the fly (can be optimised later)
+        const items = await this.getHealthHistory(startDate, endDate);
+        const total = items.length;
+        const healthy = items.filter((i) => i.status === 'healthy').length;
+        const unhealthy = items.filter((i) => i.status === 'unhealthy').length;
+        const degraded = total - healthy - unhealthy;
+
+        return {
+            period: { start: startDate, end: endDate },
+            totalChecks: total,
+            healthy,
+            unhealthy,
+            degraded,
+            availability: total ? healthy / total : 0,
+        };
+    }
+
+    async registerCustomCheck(body: {
+        name: string;
+        check: string; // javascript source that returns HealthCheckResult
+        options?: HealthCheckOptions;
+    }): Promise<void> {
+        // VERY NAIVE: eval the string -> () => Promise<HealthCheckResult>
+        // In real life compile via VM2 / isolate etc.
+        try {
+            // eslint-disable-next-line @typescript-eslint/no-implied-eval
+            const fn = new Function('return ' + body.check)() as () => Promise<HealthCheckResult>;
+            this.registerHealthCheck(body.name, fn, body.options);
+        } catch (e) {
+            logger.error('Invalid custom check code', e);
+            throw new Error('Custom check code could not be parsed');
         }
-
-        return checks;
     }
 
-    /**
-     * Calculate overall health status
-     */
-    private calculateOverallStatus(checks: HealthCheck[]): 'healthy' | 'unhealthy' | 'degraded' {
-        if (checks.length === 0) return 'healthy';
+    /* ------------------------------------------------------------------ */
+    /*  Helpers                                                             */
+    /* ------------------------------------------------------------------ */
 
-        const unhealthyChecks = checks.filter(c => c.status === 'unhealthy');
-        const degradedChecks = checks.filter(c => c.status === 'degraded');
+    private async buildHealthStatus(detailed: boolean): Promise<HealthStatus> {
+        const checks = await this.runAllHealthChecks();
+        const status = this.calculateOverallStatus(checks);
 
-        if (unhealthyChecks.length > 0) return 'unhealthy';
-        if (degradedChecks.length > 0) return 'degraded';
+        const meta = {
+            version: process.env.npm_package_version || '1.0.0',
+            environment: process.env.NODE_ENV || 'development',
+            region: process.env.REGION || 'unknown',
+            uptime: Date.now() - this.systemStartTime,
+            memoryUsage: this.getMemoryUsage(),
+            cpuUsage: this.getCPUUsage(),
+        };
 
-        return 'healthy';
+        const healthStatus: HealthStatus = { status, timestamp: new Date(), checks, metadata: meta };
+
+        await this.cacheService.set('health:status', healthStatus, { ttl: 60 });
+        if (detailed) await this.saveHealthHistory(healthStatus);
+
+        return healthStatus;
     }
 
-    /**
-     * Get memory usage
-     */
-    private getMemoryUsage() {
+    private async buildHealthReport(): Promise<HealthReport> {
+        const [systemMetrics, databaseHealth, cacheHealth, externalServices, queues, healthStatus] =
+            await Promise.all([
+                this.buildSystemMetrics(),
+                this.checkDatabaseHealth(),
+                this.checkCacheHealth(),
+                this.checkExternalServices(),
+                this.checkQueues(),
+                this.buildHealthStatus(true),
+            ]);
+
+        const recommendations = this.generateRecommendations({
+            systemMetrics,
+            databaseHealth,
+            cacheHealth,
+            externalServices,
+            queues,
+            checks: healthStatus.checks,
+        });
+
+        const alerts = await this.checkForAlerts({
+            systemMetrics,
+            databaseHealth,
+            cacheHealth,
+            externalServices,
+            queues,
+        });
+
+        const report: HealthReport = {
+            id: uuidv4(),
+            timestamp: new Date(),
+            overallStatus: healthStatus.status,
+            systemMetrics,
+            databaseHealth,
+            cacheHealth,
+            externalServices,
+            queues,
+            checks: healthStatus.checks,
+            alerts,
+            recommendations,
+            nextCheck: addMinutes(new Date(), 5),
+        };
+
+        await this.healthRepository.saveHealthReport(report);
+        return report;
+    }
+
+    private async buildSystemMetrics(): Promise<SystemMetrics> {
         const total = os.totalmem();
         const free = os.freemem();
         const used = total - free;
 
+        const cpus = os.cpus();
+        const avgCpu =
+            cpus.reduce((acc, c) => {
+                const t = Object.values(c.times).reduce((a, b) => a + b, 0);
+                return acc + ((t - c.times.idle) / t) * 100;
+            }, 0) / cpus.length;
+
+        const ifaces: any[] = [];
+        const ni = os.networkInterfaces();
+        Object.keys(ni).forEach((name) =>
+            ni[name]?.forEach((net) =>
+                ifaces.push({
+                    name,
+                    address: net.address,
+                    netmask: net.netmask,
+                    family: net.family,
+                    mac: net.mac,
+                    internal: net.internal,
+                    cidr: net.cidr,
+                }),
+            ),
+        );
+
         return {
-            used,
-            total,
-            percentage: used / total
+            uptime: os.uptime() * 1000,
+            memory: { used, total, free, percentage: used / total },
+            cpu: { usage: avgCpu, loadAverage: os.loadavg(), cores: cpus.length },
+            disk: await this.getDiskUsage(),
+            network: { interfaces: ifaces, stats: await this.getNetworkStats() },
+            process: {
+                pid: process.pid,
+                version: process.version,
+                nodeVersion: process.versions.node,
+                platform: process.platform,
+                arch: process.arch,
+                argv: process.argv,
+                execPath: process.execPath,
+                execArgv: process.execArgv,
+            },
         };
     }
 
-    /**
-     * Get CPU usage
-     */
+    private async runAllHealthChecks(): Promise<HealthCheck[]> {
+        const checks: HealthCheck[] = [];
+        for (const [name, fn] of this.healthChecks) {
+            const r = await this.runHealthCheck(name);
+            checks.push({
+                name: r.name,
+                status: r.status,
+                message: r.message,
+                duration: r.duration,
+                timestamp: r.timestamp,
+                metadata: r.data,
+                error: r.error
+                    ? {
+                        code: r.error.name ?? 'UNKNOWN',
+                        message: r.error.message,
+                        stack: r.error.stack,
+                    }
+                    : undefined,
+            });
+        }
+        return checks;
+    }
+
+    private calculateOverallStatus(checks: HealthCheck[]): 'healthy' | 'unhealthy' | 'degraded' {
+        if (!checks.length) return 'healthy';
+        const un = checks.filter((c) => c.status === 'unhealthy').length;
+        const deg = checks.filter((c) => c.status === 'degraded').length;
+        return un > 0 ? 'unhealthy' : deg > 0 ? 'degraded' : 'healthy';
+    }
+
+    /* ------------------------------------------------------------------ */
+    /*  Default health checks                                               */
+    /* ------------------------------------------------------------------ */
+
+    private initializeHealthChecks(): void {
+        this.registerHealthCheck('database', async () => {
+            const start = Date.now();
+            try {
+                const db = this.firebaseService.getFirestore();
+                const doc = db.collection('health').doc('test');
+                await doc.set({ ts: new Date() });
+                const snap = await doc.get();
+                if (!snap.exists) throw new Error('read failed');
+                await doc.delete();
+                const dur = Date.now() - start;
+
+                /* return only the fields YOU own */
+                return {
+                    name: 'database',
+                    status: dur > this.healthThresholds.responseTime.critical ? 'degraded' : 'healthy',
+                    message: `DB responsive (${dur}ms)`,
+                    data: { responseTime: dur },
+                } as HealthCheckResult; // <-- tell TS “caller will add the rest”
+            } catch (e: any) {
+                return {
+                    name: 'database',
+                    status: 'unhealthy',
+                    message: 'DB failed',
+                    error: e,
+                } as HealthCheckResult;
+            }
+        });
+
+        /* ---------- cache ---------- */
+        this.registerHealthCheck('cache', async () => {
+            const start = Date.now();
+            try {
+                const key = 'health:cache:test';
+                await this.cacheService.set(key, 'test', { ttl: 60 });
+                const v = await this.cacheService.get(key);
+                if (v !== 'test') throw new Error('cache read failed');
+                await this.cacheService.delete(key);
+                const dur = Date.now() - start;
+                return {
+                    name: 'cache',
+                    status: dur > 100 ? 'degraded' : 'healthy',
+                    message: `Cache responsive (${dur}ms)`,
+                    data: { responseTime: dur },
+                } as HealthCheckResult;
+            } catch (e: any) {
+                return { name: 'cache', status: 'unhealthy', message: 'Cache failed', error: e } as HealthCheckResult;
+            }
+        });
+
+        /* ---------- memory ---------- */
+        this.registerHealthCheck('memory', async () => {
+            const mu = this.getMemoryUsage();
+            const pct = mu.percentage;
+            let status: 'healthy' | 'degraded' | 'unhealthy';
+            let msg: string;
+            if (pct >= this.healthThresholds.memoryUsage.critical) {
+                status = 'unhealthy';
+                msg = `Memory critically high (${Math.round(pct * 100)}%)`;
+            } else if (pct >= this.healthThresholds.memoryUsage.warning) {
+                status = 'degraded';
+                msg = `Memory high (${Math.round(pct * 100)}%)`;
+            } else {
+                status = 'healthy';
+                msg = `Memory normal (${Math.round(pct * 100)}%)`;
+            }
+            return { name: 'memory', status, message: msg, data: mu } as HealthCheckResult;
+        });
+
+        /* ---------- cpu ---------- */
+        this.registerHealthCheck('cpu', async () => {
+            const cu = this.getCPUUsage();
+            const pct = cu.usage;
+            let status: 'healthy' | 'degraded' | 'unhealthy';
+            let msg: string;
+            if (pct >= this.healthThresholds.cpuUsage.critical) {
+                status = 'unhealthy';
+                msg = `CPU critically high (${Math.round(pct)}%)`;
+            } else if (pct >= this.healthThresholds.cpuUsage.warning) {
+                status = 'degraded';
+                msg = `CPU high (${Math.round(pct)}%)`;
+            } else {
+                status = 'healthy';
+                msg = `CPU normal (${Math.round(pct)}%)`;
+            }
+            return { name: 'cpu', status, message: msg, data: cu } as HealthCheckResult;
+        });
+
+        /* ---------- external-services ---------- */
+        this.registerHealthCheck('external-services', async () => {
+            const svcs = [
+                { name: 'firebase', check: async () => this.firebaseService.getFirestore().collection('health').limit(1).get() },
+                { name: 'redis', check: async () => this.cacheService.ping() },
+            ];
+            const res = await Promise.allSettled(svcs.map((s) => s.check()));
+            const failed = res.filter((r) => r.status === 'rejected').length;
+            return {
+                name: 'external-services',
+                status: failed > 0 ? 'degraded' : 'healthy',
+                message: failed > 0 ? `${failed} services unhealthy` : 'All healthy',
+                data: { total: svcs.length, healthy: svcs.length - failed, failed },
+            } as HealthCheckResult;
+        });
+    }
+
+    registerHealthCheck(
+        name: string,
+        checkFn: () => Promise<HealthCheckResult>,
+        _opts?: HealthCheckOptions,
+    ): void {
+        this.healthChecks.set(name, checkFn);
+        logger.log({ level: 'info', message: `Health-check registered: ${name}` });
+    }
+
+    /* ------------------------------------------------------------------ */
+    /*  Other small helpers                                                 */
+    /* ------------------------------------------------------------------ */
+
+    private getMemoryUsage() {
+        const total = os.totalmem();
+        const free = os.freemem();
+        const used = total - free;
+        return { used, total, percentage: used / total };
+    }
+
     private getCPUUsage() {
         const cpus = os.cpus();
-        const avgUsage = cpus.reduce((acc, cpu) => {
-            const times = cpu.times;
-            const total = Object.values(times).reduce((a, b) => a + b, 0);
-            const idle = times.idle;
-            return acc + ((total - idle) / total * 100);
-        }, 0) / cpus.length;
-
-        return {
-            usage: avgUsage,
-            loadAverage: os.loadavg(),
-            cores: cpus.length
-        };
+        const avg =
+            cpus.reduce((acc, c) => {
+                const t = Object.values(c.times).reduce((a, b) => a + b, 0);
+                return acc + ((t - c.times.idle) / t) * 100;
+            }, 0) / cpus.length;
+        return { usage: avg, loadAverage: os.loadavg(), cores: cpus.length };
     }
 
-    /**
-     * Get disk usage
-     */
     private async getDiskUsage() {
-        try {
-            // This is a simplified implementation
-            // In a real scenario, you'd use a library like 'check-disk-space'
-            return {
-                used: 100 * 1024 * 1024 * 1024, // 100GB used
-                total: 500 * 1024 * 1024 * 1024, // 500GB total
-                free: 400 * 1024 * 1024 * 1024, // 400GB free
-                percentage: 0.2 // 20% used
-            };
-        } catch (error) {
-            logger.error('Error getting disk usage:', error);
-            return {
-                used: 0,
-                total: 0,
-                free: 0,
-                percentage: 0
-            };
-        }
+        // placeholder – replace with real lib if needed
+        return { used: 100e9, total: 500e9, free: 400e9, percentage: 0.2 };
     }
 
-    /**
-     * Get network stats
-     */
     private async getNetworkStats() {
-        try {
-            // This is a simplified implementation
-            return {
-                bytesReceived: 1024 * 1024 * 1024, // 1GB
-                bytesSent: 512 * 1024 * 1024, // 512MB
-                packetsReceived: 1000000,
-                packetsSent: 800000,
-                errors: 10,
-                drops: 5
-            };
-        } catch (error) {
-            logger.error('Error getting network stats:', error);
-            return {
-                bytesReceived: 0,
-                bytesSent: 0,
-                packetsReceived: 0,
-                packetsSent: 0,
-                errors: 0,
-                drops: 0
-            };
-        }
+        // placeholder
+        return { bytesReceived: 1e9, bytesSent: 512e6, packetsReceived: 1e6, packetsSent: 8e5, errors: 10, drops: 5 };
     }
 
-    /**
-     * Check database health
-     */
     private async checkDatabaseHealth(): Promise<DatabaseHealth> {
         try {
-            const startTime = Date.now();
-            const db = this.firebaseService.getFirestore();
-
-            // Simple query to test connection
-            const snapshot = await db.collection('health').limit(1).get();
-            const responseTime = Date.now() - startTime;
-
+            const start = Date.now();
+            await this.firebaseService.getFirestore().collection('health').limit(1).get();
+            const rt = Date.now() - start;
             return {
                 connected: true,
-                responseTime,
+                responseTime: rt,
                 lastCheck: new Date(),
-                errorRate: 0.01, // 1% error rate
-                queryPerformance: {
-                    avgQueryTime: responseTime,
-                    slowQueries: 0,
-                    totalQueries: 1000
-                }
+                errorRate: 0.01,
+                queryPerformance: { avgQueryTime: rt, slowQueries: 0, totalQueries: 1000 },
             };
-        } catch (error) {
+        } catch {
             return {
                 connected: false,
                 responseTime: -1,
                 lastCheck: new Date(),
                 errorRate: 1,
-                queryPerformance: {
-                    avgQueryTime: -1,
-                    slowQueries: 0,
-                    totalQueries: 0
-                }
+                queryPerformance: { avgQueryTime: -1, slowQueries: 0, totalQueries: 0 },
             };
         }
     }
 
-    /**
-     * Check cache health
-     */
     private async checkCacheHealth(): Promise<CacheHealth> {
         try {
-            // Test cache operations
-            const testKey = 'health:cache:test';
-            await this.cacheService.set(testKey, 'test', 60);
-            const value = await this.cacheService.get(testKey);
-            await this.cacheService.delete(testKey);
-
-            return {
-                connected: true,
-                hitRate: 0.95, // 95% hit rate
-                memoryUsage: 100 * 1024 * 1024, // 100MB
-                keysCount: 1000,
-                evictionCount: 10
-            };
-        } catch (error) {
-            return {
-                connected: false,
-                hitRate: 0,
-                memoryUsage: 0,
-                keysCount: 0,
-                evictionCount: 0
-            };
+            const key = 'health:cache:test';
+            await this.cacheService.set(key, '1', { ttl: 60 });
+            await this.cacheService.get(key);
+            await this.cacheService.delete(key);
+            return { connected: true, hitRate: 0.95, memoryUsage: 100 * 1024 * 1024, keysCount: 1000, evictionCount: 10 };
+        } catch {
+            return { connected: false, hitRate: 0, memoryUsage: 0, keysCount: 0, evictionCount: 0 };
         }
     }
 
-    /**
-     * Check external services
-     */
     private async checkExternalServices(): Promise<ExternalServiceHealth[]> {
-        const services = [
+        const svcs = [
             { name: 'Firebase', url: 'https://firebase.google.com' },
-            { name: 'Email Service', url: 'https://api.sendgrid.com' }
+            { name: 'Email Service', url: 'https://api.sendgrid.com' },
         ];
-
         return Promise.all(
-            services.map(async (service) => {
-                const startTime = Date.now();
+            svcs.map(async (s) => {
+                const start = Date.now();
                 try {
-                    // Simulate external service check
-                    await new Promise(resolve => setTimeout(resolve, 100));
-                    const responseTime = Date.now() - startTime;
-
-                    return {
-                        name: service.name,
-                        status: 'healthy',
-                        responseTime,
-                        lastCheck: new Date(),
-                        errorRate: 0.01,
-                        availability: 0.99
-                    };
-                } catch (error) {
-                    return {
-                        name: service.name,
-                        status: 'unhealthy',
-                        responseTime: -1,
-                        lastCheck: new Date(),
-                        errorRate: 1,
-                        availability: 0
-                    };
+                    // fake ping
+                    await new Promise((resolve) => setTimeout(resolve, 100));
+                    const rt = Date.now() - start;
+                    return { name: s.name, status: 'healthy', responseTime: rt, lastCheck: new Date(), errorRate: 0.01, availability: 0.99 };
+                } catch {
+                    return { name: s.name, status: 'unhealthy', responseTime: -1, lastCheck: new Date(), errorRate: 1, availability: 0 };
                 }
-            })
+            }),
         );
     }
 
-    /**
-     * Check queues
-     */
     private async checkQueues(): Promise<QueueHealth[]> {
-        // This is a simplified implementation
+        // stub
         return [
-            {
-                name: 'export',
-                connected: true,
-                queueSize: 10,
-                processingRate: 5,
-                failedJobs: 2,
-                delayedJobs: 1
-            },
-            {
-                name: 'email',
-                connected: true,
-                queueSize: 5,
-                processingRate: 10,
-                failedJobs: 0,
-                delayedJobs: 0
-            }
+            { name: 'export', connected: true, queueSize: 10, processingRate: 5, failedJobs: 2, delayedJobs: 1 },
+            { name: 'email', connected: true, queueSize: 5, processingRate: 10, failedJobs: 0, delayedJobs: 0 },
         ];
     }
 
-    /**
-     * Generate recommendations
-     */
     private generateRecommendations(data: any): string[] {
-        const recommendations: string[] = [];
-
-        // Memory recommendations
-        if (data.systemMetrics.memory.percentage > this.healthThresholds.memoryUsage.warning) {
-            recommendations.push('Consider increasing available memory or optimizing memory usage');
-        }
-
-        // CPU recommendations
-        if (data.systemMetrics.cpu.usage > this.healthThresholds.cpuUsage.warning) {
-            recommendations.push('High CPU usage detected. Consider scaling horizontally or optimizing code');
-        }
-
-        // Database recommendations
-        if (data.databaseHealth.errorRate > this.healthThresholds.errorRate.warning) {
-            recommendations.push('High database error rate detected. Check database logs and connection pool');
-        }
-
-        // Cache recommendations
-        if (!data.cacheHealth.connected) {
-            recommendations.push('Cache service is not responding. Check Redis connection and configuration');
-        }
-
-        // External services recommendations
-        const unhealthyServices = data.externalServices.filter((s: any) => s.status !== 'healthy');
-        if (unhealthyServices.length > 0) {
-            recommendations.push(`${unhealthyServices.length} external services are unhealthy. Check service status and network connectivity`);
-        }
-
-        return recommendations;
+        const rec: string[] = [];
+        if (data.systemMetrics.memory.percentage > this.healthThresholds.memoryUsage.warning)
+            rec.push('Consider increasing memory or optimising usage');
+        if (data.systemMetrics.cpu.usage > this.healthThresholds.cpuUsage.warning)
+            rec.push('High CPU – consider scaling or optimisation');
+        if (data.databaseHealth.errorRate > this.healthThresholds.errorRate.warning)
+            rec.push('DB error-rate high – check logs');
+        if (!data.cacheHealth.connected) rec.push('Cache unreachable – check Redis');
+        const bad = data.externalServices.filter((s: any) => s.status !== 'healthy');
+        if (bad.length) rec.push(`${bad.length} external services unhealthy`);
+        return rec;
     }
 
-    /**
-     * Check for alerts
-     */
     private async checkForAlerts(data: any): Promise<HealthAlert[]> {
         const alerts: HealthAlert[] = [];
+        const mem = data.systemMetrics.memory.percentage;
+        const cpu = data.systemMetrics.cpu.usage;
 
-        // Memory alert
-        if (data.systemMetrics.memory.percentage > this.healthThresholds.memoryUsage.critical) {
-            alerts.push({
-                id: uuidv4(),
-                type: 'performance_degradation',
-                severity: 'critical',
-                service: 'system',
-                message: `Memory usage is critically high: ${Math.round(data.systemMetrics.memory.percentage * 100)}%`,
-                details: data.systemMetrics.memory,
-                timestamp: new Date(),
-                acknowledged: false,
-                resolved: false
-            });
-        }
+        if (mem > this.healthThresholds.memoryUsage.critical)
+            alerts.push(this.makeAlert('performance_degradation', 'critical', 'system', `Memory critically high: ${Math.round(mem * 100)}%`, data.systemMetrics.memory));
+        if (cpu > this.healthThresholds.cpuUsage.critical)
+            alerts.push(this.makeAlert('performance_degradation', 'high', 'system', `CPU critically high: ${Math.round(cpu)}%`, data.systemMetrics.cpu));
+        if (!data.databaseHealth.connected)
+            alerts.push(this.makeAlert('service_down', 'critical', 'database', 'Database connection failed', data.databaseHealth));
+        if (!data.cacheHealth.connected)
+            alerts.push(this.makeAlert('service_down', 'high', 'cache', 'Cache unreachable', data.cacheHealth));
 
-        // CPU alert
-        if (data.systemMetrics.cpu.usage > this.healthThresholds.cpuUsage.critical) {
-            alerts.push({
-                id: uuidv4(),
-                type: 'performance_degradation',
-                severity: 'high',
-                service: 'system',
-                message: `CPU usage is critically high: ${Math.round(data.systemMetrics.cpu.usage)}%`,
-                details: data.systemMetrics.cpu,
-                timestamp: new Date(),
-                acknowledged: false,
-                resolved: false
-            });
-        }
-
-        // Database alert
-        if (!data.databaseHealth.connected) {
-            alerts.push({
-                id: uuidv4(),
-                type: 'service_down',
-                severity: 'critical',
-                service: 'database',
-                message: 'Database connection failed',
-                details: data.databaseHealth,
-                timestamp: new Date(),
-                acknowledged: false,
-                resolved: false
-            });
-        }
-
-        // Cache alert
-        if (!data.cacheHealth.connected) {
-            alerts.push({
-                id: uuidv4(),
-                type: 'service_down',
-                severity: 'high',
-                service: 'cache',
-                message: 'Cache service is not responding',
-                details: data.cacheHealth,
-                timestamp: new Date(),
-                acknowledged: false,
-                resolved: false
-            });
-        }
-
-        // Save alerts
-        for (const alert of alerts) {
-            await this.healthRepository.saveAlert(alert);
-        }
-
+        for (const a of alerts) await this.healthRepository.saveAlert(a);
         return alerts;
     }
 
-    /**
-     * Save health history
-     */
-    private async saveHealthHistory(healthStatus: HealthStatus): Promise<void> {
-        try {
-            const history: HealthHistory = {
-                id: uuidv4(),
-                timestamp: healthStatus.timestamp,
-                status: healthStatus.status,
-                duration: healthStatus.checks.reduce((acc, check) => acc + check.duration, 0),
-                checks: healthStatus.checks,
-                alerts: []
-            };
-
-            await this.healthRepository.saveHealthHistory(history);
-        } catch (error) {
-            logger.error('Error saving health history:', error);
-        }
+    private makeAlert(
+        type: HealthAlert['type'],
+        severity: HealthAlert['severity'],
+        service: string,
+        msg: string,
+        details: any,
+    ): HealthAlert {
+        return {
+            id: uuidv4(),
+            type,
+            severity,
+            service,
+            message: msg,
+            details,
+            timestamp: new Date(),
+            acknowledged: false,
+            resolved: false,
+        };
     }
 
-    /**
-     * Start health monitoring
-     */
+    private async saveHealthHistory(status: HealthStatus): Promise<void> {
+        const h: HealthHistory = {
+            id: uuidv4(),
+            timestamp: status.timestamp,
+            status: status.status,
+            duration: status.checks.reduce((a, c) => a + c.duration, 0),
+            checks: status.checks,
+            alerts: [],
+        };
+        await this.healthRepository.saveHealthHistory(h);
+    }
+
     private startHealthMonitoring(): void {
-        // Run health checks every 5 minutes
         this.healthCheckInterval = setInterval(async () => {
             try {
-                await this.getHealthStatus(true);
-            } catch (error) {
-                logger.error('Health monitoring check failed:', error);
+                await this.buildHealthStatus(true);
+            } catch (e) {
+                logger.error('Background health check failed', e);
             }
-        }, 5 * 60 * 1000); // 5 minutes
+        }, 5 * 60 * 1000);
 
-        // Cleanup old health history daily
         setInterval(async () => {
             try {
-                const thirtyDaysAgo = subDays(new Date(), 30);
-                await this.healthRepository.cleanupOldHistory(thirtyDaysAgo);
-            } catch (error) {
-                logger.error('Health history cleanup failed:', error);
+                await this.healthRepository.cleanupOldHistory(subDays(new Date(), 30));
+            } catch (e) {
+                logger.error('History cleanup failed', e);
             }
-        }, 24 * 60 * 60 * 1000); // 24 hours
+        }, 24 * 60 * 60 * 1000);
     }
 
-    /**
-     * Cleanup on shutdown
-     */
     onModuleDestroy(): void {
-        if (this.healthCheckInterval) {
-            clearInterval(this.healthCheckInterval);
-        }
+        if (this.healthCheckInterval) clearInterval(this.healthCheckInterval);
     }
 }
