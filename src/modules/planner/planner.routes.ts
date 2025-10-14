@@ -1,9 +1,10 @@
 import { Router } from 'express';
 import { container } from 'tsyringe';
 import { PlannerController } from './planner.controller';
-import { authMiddleware } from '../auth/auth.middleware';
-import { validationMiddleware } from '../../shared/middleware/validation.middleware';
+import { authenticate } from '../../shared/middleware/auth.middleware';
+import { validate } from '../../shared/middleware/validation.middleware';
 import { rateLimiter } from '../../shared/middleware/rate-limit.middleware';
+import { plannerValidations } from './planner.validation';
 
 const router = Router();
 const plannerController = container.resolve(PlannerController);
@@ -16,7 +17,8 @@ const plannerController = container.resolve(PlannerController);
  */
 
 // All routes require authentication
-router.use(authMiddleware());
+router.use(authenticate());
+router.use(rateLimiter)
 
 /**
  * @swagger
@@ -62,8 +64,7 @@ router.use(authMiddleware());
  *         description: Plan limit exceeded
  */
 router.post('/',
-    rateLimiter({ windowMs: 15 * 60 * 1000, max: 10 }),
-    validationMiddleware(plannerController.plannerValidation.createPlanner),
+    validate(plannerValidations.createPlanner),
     plannerController.createPlanner
 );
 
@@ -103,7 +104,7 @@ router.post('/',
  *         description: Planners retrieved successfully
  */
 router.get('/',
-    validationMiddleware(plannerController.plannerValidation.listPlanners),
+    validate(plannerValidations.listPlanners),
     plannerController.listPlanners
 );
 
@@ -128,7 +129,7 @@ router.get('/',
  *         description: Planner not found
  */
 router.get('/:id',
-    validationMiddleware(plannerController.plannerValidation.getPlanner),
+    validate(plannerValidations.getPlanner),
     plannerController.getPlanner
 );
 
@@ -176,7 +177,7 @@ router.get('/:id',
  *         description: Planner not found
  */
 router.patch('/:id',
-    validationMiddleware(plannerController.plannerValidation.updatePlanner),
+    validate(plannerValidations.updatePlanner),
     plannerController.updatePlanner
 );
 
@@ -203,7 +204,7 @@ router.patch('/:id',
  *         description: Planner not found
  */
 router.delete('/:id',
-    validationMiddleware(plannerController.plannerValidation.deletePlanner),
+    validate(plannerValidations.deletePlanner),
     plannerController.deletePlanner
 );
 
@@ -248,7 +249,7 @@ router.delete('/:id',
  *         description: No share permission
  */
 router.post('/:id/share',
-    validationMiddleware(plannerController.plannerValidation.sharePlanner),
+    validate(plannerValidations.sharePlanner),
     plannerController.sharePlanner
 );
 
@@ -310,7 +311,7 @@ router.delete('/:id/collaborators/:userId', plannerController.removeCollaborator
  *         description: Planner duplicated successfully
  */
 router.post('/:id/duplicate',
-    validationMiddleware(plannerController.plannerValidation.duplicatePlanner),
+    validate(plannerValidations.duplicatePlanner),
     plannerController.duplicatePlanner
 );
 
@@ -355,7 +356,7 @@ router.post('/:id/duplicate',
  *               format: binary
  */
 router.post('/:id/export',
-    validationMiddleware(plannerController.plannerValidation.exportPlanner),
+    validate(plannerValidations.exportPlanner),
     plannerController.exportPlanner
 );
 

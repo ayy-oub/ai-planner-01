@@ -6,7 +6,7 @@ export class AppError extends Error {
     public readonly errorCode: string;
     public readonly details?: any;
     public readonly isOperational: boolean;
-    public code: string; 
+    public code: string;
 
     constructor(
         message: string,
@@ -284,6 +284,7 @@ export enum ErrorCode {
     AI_SERVICE_ERROR = 'AI_SERVICE_ERROR',
     SERVICE_UNAVAILABLE = 'SERVICE_UNAVAILABLE',
     CIRCUIT_BREAKER_OPEN = 'CIRCUIT_BREAKER_OPEN',
+    QUOTA_EXCEEDED = 'QUOTA_EXCEEDED',
 
     // File errors
     FILE_UPLOAD_ERROR = 'FILE_UPLOAD_ERROR',

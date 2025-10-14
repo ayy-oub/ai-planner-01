@@ -48,6 +48,21 @@ export class UserRepository {
     }
 
     /* ------------------------------------------------------------------ */
+    /*  Email lookup                                                      */
+    /* ------------------------------------------------------------------ */
+    async getProfileByEmail(email: string): Promise<UserProfile | null> {
+        try {
+            const snap = await this.userColl.where('email', '==', email).limit(1).get();
+            return snap.empty
+                ? null
+                : ({ uid: snap.docs[0].id, ...snap.docs[0].data() } as UserProfile);
+        } catch (err) {
+            logger.error('getProfileByEmail error', { email, err });
+            throw new AppError('Failed to fetch user by email', 500, undefined, ErrorCode.DATABASE_CONNECTION_ERROR);
+        }
+    }
+
+    /* ------------------------------------------------------------------ */
     /*  Settings                                                          */
     /* ------------------------------------------------------------------ */
 

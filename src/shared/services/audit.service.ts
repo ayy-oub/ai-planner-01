@@ -246,8 +246,8 @@ export class AuditService {
             requestId: context.requestId,
         });
     }
-    
-    
+
+
     async logSecurityEvent(securityLog: SecurityLog & { success?: boolean }): Promise<void> {
         return this.logEvent({
             action: `SECURITY_${securityLog.event.toUpperCase()}`,
@@ -261,6 +261,26 @@ export class AuditService {
             status: securityLog.success === false ? 'failure' : 'success',
             timestamp: securityLog.timestamp,
         });
+    }
+
+    // inside AuditService
+    async logActivity(entry: {
+        userId: string;
+        action: string;
+        metadata?: any;
+        resource?: string;            // optional override
+        timestamp?: Date;             // optional override
+    }): Promise<void> {
+        return this.logDataAccess(
+            entry.action as any,
+            entry.resource || 'activity', // default resource
+            entry.userId,
+            entry.metadata,
+            {
+                userId: entry.userId,
+                ...(entry.timestamp && { timestamp: entry.timestamp }), // pass if supplied
+            }
+        );
     }
 
     /* ------------------------ Querying -------------------------------- */

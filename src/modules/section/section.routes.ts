@@ -1,9 +1,11 @@
+// src/modules/section/section.routes.ts
 import { Router } from 'express';
 import { container } from 'tsyringe';
 import { SectionController } from './section.controller';
-import { authMiddleware } from '../auth/auth.middleware';
-import { validationMiddleware } from '../../shared/middleware/validation.middleware';
+import { authenticate } from '../../shared/middleware/auth.middleware';
+import { validate } from '../../shared/middleware/validation.middleware';
 import { rateLimiter } from '../../shared/middleware/rate-limit.middleware';
+import { sectionValidations } from './section.validations';
 
 const router = Router();
 const sectionController = container.resolve(SectionController);
@@ -16,7 +18,12 @@ const sectionController = container.resolve(SectionController);
  */
 
 // All routes require authentication
-router.use(authMiddleware());
+router.use(authenticate());
+router.use(rateLimiter);
+
+/* ==========================================================
+   CRUD
+   ========================================================== */
 
 /**
  * @swagger
@@ -32,6 +39,7 @@ router.use(authMiddleware());
  *         required: true
  *         schema:
  *           type: string
+ *         description: ID of the parent planner
  *     requestBody:
  *       required: true
  *       content:
@@ -40,30 +48,63 @@ router.use(authMiddleware());
  *             type: object
  *             required:
  *               - title
+ *               - type
  *             properties:
  *               title:
  *                 type: string
+ *                 minLength: 1
+ *                 maxLength: 100
+ *                 description: Section title
  *               description:
  *                 type: string
+ *                 maxLength: 500
+ *                 description: Optional description
  *               type:
  *                 type: string
- *                 enum: [tasks, notes, goals]
+ *                 enum: [tasks, notes, goals, habits, milestones]
+ *                 description: Section type
  *               order:
- *                 type: number
+ *                 type: integer
+ *                 minimum: 0
+ *                 description: Display order inside the planner
  *               settings:
  *                 type: object
+ *                 properties:
+ *                   collapsed:
+ *                     type: boolean
+ *                   color:
+ *                     type: string
+ *                     pattern: '^#[0-9A-F]{6}$'
+ *                     description: Hex color code
+ *                   icon:
+ *                     type: string
+ *                     maxLength: 50
+ *                   visibility:
+ *                     type: string
+ *                     enum: [visible, hidden, collapsed]
+ *                   maxActivities:
+ *                     type: integer
+ *                     minimum: 1
+ *                   autoArchiveCompleted:
+ *                     type: boolean
+ *                   defaultActivityType:
+ *                     type: string
+ *                     enum: [task, event, note, goal, habit, milestone]
  *     responses:
  *       201:
  *         description: Section created successfully
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/SectionResponse'
  *       400:
- *         description: Section limit exceeded
+ *         description: Validation error / Section limit exceeded
  *       403:
  *         description: No edit permission
  */
 router.post('/planners/:plannerId/sections',
-    rateLimiter({ windowMs: 15 * 60 * 1000, max: 20 }),
-    validationMiddleware(sectionController.sectionValidation.createSection),
-    sectionController.createSection
+  validate(sectionValidations.createSection),
+  sectionController.createSection
 );
 
 /**
@@ -80,15 +121,20 @@ router.post('/planners/:plannerId/sections',
  *         required: true
  *         schema:
  *           type: string
+ *         description: Section ID
  *     responses:
  *       200:
  *         description: Section retrieved successfully
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/SectionResponse'
  *       404:
  *         description: Section not found
  */
 router.get('/sections/:id',
-    validationMiddleware(sectionController.sectionValidation.getSection),
-    sectionController.getSection
+  validate(sectionValidations.getSection),
+  sectionController.getSection
 );
 
 /**
@@ -105,15 +151,59 @@ router.get('/sections/:id',
  *         required: true
  *         schema:
  *           type: string
+ *         description: Planner ID
+ *       - in: query
+ *         name: type
+ *         schema:
+ *           type: array
+ *           items:
+ *             type: string
+ *             enum: [tasks, notes, goals, habits, milestones]
+ *         description: Filter by section types
+ *       - in: query
+ *         name: search
+ *         schema:
+ *           type: string
+ *           maxLength: 100
+ *         description: Search in title/description
+ *       - in: query
+ *         name: sortBy
+ *         schema:
+ *           type: string
+ *           enum: [order, title, createdAt, updatedAt, lastActivityAt]
+ *         description: Sort field
+ *       - in: query
+ *         name: sortOrder
+ *         schema:
+ *           type: string
+ *           enum: [asc, desc]
+ *         description: Sort direction
+ *       - in: query
+ *         name: page
+ *         schema:
+ *           type: integer
+ *           minimum: 1
+ *         description: Page number
+ *       - in: query
+ *         name: limit
+ *         schema:
+ *           type: integer
+ *           minimum: 1
+ *           maximum: 100
+ *         description: Items per page
  *     responses:
  *       200:
  *         description: Sections retrieved successfully
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/SectionListResponse'
  *       404:
  *         description: Planner not found
  */
 router.get('/planners/:plannerId/sections',
-    validationMiddleware(sectionController.sectionValidation.listSections),
-    sectionController.listSections
+  validate(sectionValidations.listSections),
+  sectionController.listSections
 );
 
 /**
@@ -130,6 +220,7 @@ router.get('/planners/:plannerId/sections',
  *         required: true
  *         schema:
  *           type: string
+ *         description: Section ID
  *     requestBody:
  *       required: true
  *       content:
@@ -139,23 +230,51 @@ router.get('/planners/:plannerId/sections',
  *             properties:
  *               title:
  *                 type: string
+ *                 minLength: 1
+ *                 maxLength: 100
  *               description:
  *                 type: string
+ *                 maxLength: 500
  *               order:
- *                 type: number
+ *                 type: integer
+ *                 minimum: 0
  *               settings:
  *                 type: object
+ *                 properties:
+ *                   collapsed:
+ *                     type: boolean
+ *                   color:
+ *                     type: string
+ *                     pattern: '^#[0-9A-F]{6}$'
+ *                   icon:
+ *                     type: string
+ *                     maxLength: 50
+ *                   visibility:
+ *                     type: string
+ *                     enum: [visible, hidden, collapsed]
+ *                   maxActivities:
+ *                     type: integer
+ *                     minimum: 1
+ *                   autoArchiveCompleted:
+ *                     type: boolean
+ *                   defaultActivityType:
+ *                     type: string
+ *                     enum: [task, event, note, goal, habit, milestone]
  *     responses:
  *       200:
  *         description: Section updated successfully
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/SectionResponse'
  *       403:
  *         description: No edit permission
  *       404:
  *         description: Section not found
  */
 router.patch('/sections/:id',
-    validationMiddleware(sectionController.sectionValidation.updateSection),
-    sectionController.updateSection
+  validate(sectionValidations.updateSection),
+  sectionController.updateSection
 );
 
 /**
@@ -172,6 +291,7 @@ router.patch('/sections/:id',
  *         required: true
  *         schema:
  *           type: string
+ *         description: Section ID
  *     responses:
  *       200:
  *         description: Section deleted successfully
@@ -183,9 +303,13 @@ router.patch('/sections/:id',
  *         description: Section not found
  */
 router.delete('/sections/:id',
-    validationMiddleware(sectionController.sectionValidation.deleteSection),
-    sectionController.deleteSection
+  validate(sectionValidations.deleteSection),
+  sectionController.deleteSection
 );
+
+/* ==========================================================
+   ACTIONS
+   ========================================================== */
 
 /**
  * @swagger
@@ -201,6 +325,7 @@ router.delete('/sections/:id',
  *         required: true
  *         schema:
  *           type: string
+ *         description: Planner ID
  *     requestBody:
  *       required: true
  *       content:
@@ -212,6 +337,7 @@ router.delete('/sections/:id',
  *             properties:
  *               sections:
  *                 type: array
+ *                 minItems: 1
  *                 items:
  *                   type: object
  *                   required:
@@ -220,8 +346,12 @@ router.delete('/sections/:id',
  *                   properties:
  *                     id:
  *                       type: string
+ *                       format: uuid
+ *                       description: Section ID
  *                     order:
- *                       type: number
+ *                       type: integer
+ *                       minimum: 0
+ *                       description: New order index
  *     responses:
  *       200:
  *         description: Sections reordered successfully
@@ -231,8 +361,8 @@ router.delete('/sections/:id',
  *         description: No edit permission
  */
 router.post('/planners/:plannerId/sections/reorder',
-    validationMiddleware(sectionController.sectionValidation.reorderSections),
-    sectionController.reorderSections
+  validate(sectionValidations.reorderSections),
+  sectionController.reorderSections
 );
 
 /**
@@ -249,15 +379,20 @@ router.post('/planners/:plannerId/sections/reorder',
  *         required: true
  *         schema:
  *           type: string
+ *         description: Section ID
  *     responses:
  *       200:
  *         description: Statistics retrieved successfully
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/SectionStatistics'
  *       404:
  *         description: Section not found
  */
 router.get('/sections/:id/statistics',
-    validationMiddleware(sectionController.sectionValidation.getSectionStatistics),
-    sectionController.getSectionStatistics
+  validate(sectionValidations.getSectionStatistics),
+  sectionController.getSectionStatistics
 );
 
 export default router;

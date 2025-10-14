@@ -1,9 +1,10 @@
 import { Router } from 'express';
 import { container } from 'tsyringe';
 import { ActivityController } from './activity.controller';
-import { authMiddleware } from '../auth/auth.middleware';
-import { validationMiddleware } from '../../shared/middleware/validation.middleware';
+import { authenticate } from '../../shared/middleware/auth.middleware';
+import { validate } from '../../shared/middleware/validation.middleware';
 import { rateLimiter } from '../../shared/middleware/rate-limit.middleware';
+import { activityValidation } from './activity.validations';
 
 const router = Router();
 const activityController = container.resolve(ActivityController);
@@ -16,7 +17,8 @@ const activityController = container.resolve(ActivityController);
  */
 
 // All routes require authentication
-router.use(authMiddleware());
+router.use(authenticate());
+router.use(rateLimiter);
 
 /**
  * @swagger
@@ -47,10 +49,10 @@ router.use(authMiddleware());
  *                 type: string
  *               type:
  *                 type: string
- *                 enum: [task, event, note, goal]
+ *                 enum: [task, event, note, goal, habit, milestone]
  *               status:
  *                 type: string
- *                 enum: [pending, in-progress, completed, cancelled]
+ *                 enum: [pending, in-progress, completed, cancelled, archived]
  *               priority:
  *                 type: string
  *                 enum: [low, medium, high, urgent]
@@ -83,9 +85,9 @@ router.use(authMiddleware());
  *       403:
  *         description: No edit permission
  */
-router.post('/sections/:sectionId/activities',
-    rateLimiter({ windowMs: 15 * 60 * 1000, max: 50 }),
-    validationMiddleware(activityController.activityValidation.createActivity),
+router.post(
+    '/sections/:sectionId/activities',
+    validate(activityValidation.createActivity),
     activityController.createActivity
 );
 
@@ -136,8 +138,9 @@ router.post('/sections/:sectionId/activities',
  *       200:
  *         description: Activities retrieved successfully
  */
-router.get('/activities',
-    validationMiddleware(activityController.activityValidation.listActivities),
+router.get(
+    '/activities',
+    validate(activityValidation.listActivities),
     activityController.listActivities
 );
 
@@ -161,8 +164,9 @@ router.get('/activities',
  *       404:
  *         description: Activity not found
  */
-router.get('/activities/:id',
-    validationMiddleware(activityController.activityValidation.getActivity),
+router.get(
+    '/activities/:id',
+    validate(activityValidation.getActivity),
     activityController.getActivity
 );
 
@@ -193,10 +197,10 @@ router.get('/activities/:id',
  *                 type: string
  *               type:
  *                 type: string
- *                 enum: [task, event, note, goal]
+ *                 enum: [task, event, note, goal, habit, milestone]
  *               status:
  *                 type: string
- *                 enum: [pending, in-progress, completed, cancelled]
+ *                 enum: [pending, in-progress, completed, cancelled, archived]
  *               priority:
  *                 type: string
  *                 enum: [low, medium, high, urgent]
@@ -229,8 +233,9 @@ router.get('/activities/:id',
  *       404:
  *         description: Activity not found
  */
-router.patch('/activities/:id',
-    validationMiddleware(activityController.activityValidation.updateActivity),
+router.patch(
+    '/activities/:id',
+    validate(activityValidation.updateActivity),
     activityController.updateActivity
 );
 
@@ -256,8 +261,9 @@ router.patch('/activities/:id',
  *       404:
  *         description: Activity not found
  */
-router.delete('/activities/:id',
-    validationMiddleware(activityController.activityValidation.deleteActivity),
+router.delete(
+    '/activities/:id',
+    validate(activityValidation.deleteActivity),
     activityController.deleteActivity
 );
 

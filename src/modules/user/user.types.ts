@@ -168,6 +168,10 @@ export interface UserProfile {
     github?: string;
     instagram?: string;
   };
+  subscription?: UserSubscription;
+  statistics?: UserStatistics;
+  preferences?: UserPreferences;
+  security?: UserSecurity;
   pronouns?: string;
   birthday?: Date;
   timezone?: string;

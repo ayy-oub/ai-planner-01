@@ -1,6 +1,6 @@
-// src/modules/section/section.types.ts
-import { Timestamp } from 'firebase-admin/firestore';
+import { ActivityType } from "../activity/activity.types";
 
+/*  DOMAIN-SPECIFIC SECTION TYPES  */
 export interface Section {
     id: string;
     plannerId: string;
@@ -8,72 +8,68 @@ export interface Section {
     description?: string;
     order: number;
     type: SectionType;
-    activities: string[]; // Array of activity IDs
+    activities: string[];               // only IDs to avoid circular graph
     settings: SectionSettings;
     metadata: SectionMetadata;
     createdAt: Date;
     updatedAt: Date;
     createdBy: string;
-}
+  }
+  export type SectionType = 'tasks' | 'notes' | 'goals' | 'habits' | 'milestones';
 
-export type SectionType = 'tasks' | 'notes' | 'goals' | 'habits' | 'milestones';
-
-export interface SectionSettings {
+  export interface SectionSettings {
     collapsed: boolean;
     color: string;
     icon: string;
     visibility: 'visible' | 'hidden' | 'collapsed';
     maxActivities?: number;
     autoArchiveCompleted?: boolean;
-    defaultActivityType?: 'task' | 'event' | 'note' | 'goal' | 'habit';
-}
-
-export interface SectionMetadata {
+    defaultActivityType?: ActivityType;
+  }
+  
+  export interface SectionMetadata {
     totalActivities: number;
     completedActivities: number;
     lastActivityAt: Date;
-    averageCompletionTime?: number; // minutes
-}
-
-// Request Types
-export interface CreateSectionRequest {
+    averageCompletionTime?: number;
+  }
+  
+  /*  API  */
+  export interface CreateSectionRequest {
     title: string;
     description?: string;
     type: SectionType;
     order?: number;
     settings?: Partial<SectionSettings>;
-}
-
-export interface UpdateSectionRequest {
+  }
+  
+  export interface UpdateSectionRequest {
     title?: string;
     description?: string;
     order?: number;
     settings?: Partial<SectionSettings>;
-}
-
-export interface ReorderSectionRequest {
-    sections: Array<{
-        id: string;
-        order: number;
-    }>;
-}
-
-export interface SectionFilterRequest {
+  }
+  
+  export interface ReorderSectionRequest {
+    sections: Array<{ id: string; order: number }>;
+  }
+  
+  export interface SectionFilterRequest {
     plannerId?: string;
     type?: SectionType[];
     search?: string;
     sortBy?: 'order' | 'title' | 'createdAt' | 'updatedAt' | 'lastActivityAt';
     sortOrder?: 'asc' | 'desc';
-}
-
-// Response Types
-export interface SectionResponse {
+  }
+  
+  /*  RESPONSE  */
+  export interface SectionResponse {
     section: Section;
     statistics: SectionStatistics;
-    activities: string[]; // Activity IDs for quick reference
-}
-
-export interface SectionStatistics {
+    activities: string[]; // activity IDs
+  }
+  
+  export interface SectionStatistics {
     totalActivities: number;
     completedActivities: number;
     pendingActivities: number;
@@ -81,30 +77,30 @@ export interface SectionStatistics {
     averageCompletionTime?: number;
     activitiesByStatus: Record<string, number>;
     activitiesByPriority: Record<string, number>;
-}
-
-export interface SectionListResponse {
+    lastActivityAt?: Date;
+  }
+  
+  export interface SectionListResponse {
     sections: Section[];
     total: number;
     plannerId: string;
-}
-
-// Bulk Operations
-export interface BulkSectionUpdateRequest {
+  }
+  
+  /*  BULK / AI  */
+  export interface BulkSectionUpdateRequest {
     sectionIds: string[];
     updates: Partial<Section>;
-}
-
-export interface BulkSectionDeleteRequest {
+  }
+  
+  export interface BulkSectionDeleteRequest {
     sectionIds: string[];
-}
-
-// AI Suggestions
-export interface SectionOptimizationSuggestion {
+  }
+  
+  export interface SectionOptimizationSuggestion {
     type: 'reorder' | 'merge' | 'split' | 'rename';
     suggestion: string;
     confidence: number;
     reasoning: string;
     targetSections?: string[];
     recommendedOrder?: number[];
-}
+  }

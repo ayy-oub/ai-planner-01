@@ -1,83 +1,66 @@
 // src/modules/planner/planner.service.ts
 import { injectable, inject } from 'tsyringe';
-import { v4 as uuidv4 } from 'uuid';
+const { v4: uuidv4 } = require('uuid');
 import { PlannerRepository } from './planner.repository';
 import { UserRepository } from '../user/user.repository';
 import { SectionRepository } from '../section/section.repository';
 import { ActivityRepository } from '../activity/activity.repository';
-import { CacheService } from '../../shared/services/cache.service';
 import { EmailService } from '../../shared/services/email.service';
 import { QueueService } from '../../shared/services/queue.service';
 import { AuditService } from '../../shared/services/audit.service';
 import { AIService } from '../ai/ai.service';
-import { ExportService } from '../export/export.service';
 import {
     Planner,
-    CreatePlannerRequest,
-    UpdatePlannerRequest,
     PlannerFilterRequest,
     PlannerResponse,
     PlannerStatistics,
-    UserPermissions,
     SharePlannerRequest,
     DuplicatePlannerRequest,
     ExportPlannerRequest,
-    CollaboratorResponse
+    Collaborator,
 } from './planner.types';
-import {
-    BadRequestError,
-    NotFoundError,
-    ForbiddenError,
-    UnauthorizedError
-} from '../../shared/utils/errors';
+import { AppError, ErrorCode } from '../../shared/utils/errors';
 import { logger } from '../../shared/utils/logger';
-import { config } from '../../shared/config';
 
 @injectable()
 export class PlannerService {
     constructor(
-        @inject('PlannerRepository') private plannerRepository: PlannerRepository,
-        @inject('UserRepository') private userRepository: UserRepository,
-        @inject('SectionRepository') private sectionRepository: SectionRepository,
-        @inject('ActivityRepository') private activityRepository: ActivityRepository,
-        @inject('CacheService') private cacheService: CacheService,
-        @inject('EmailService') private emailService: EmailService,
-        @inject('QueueService') private queueService: QueueService,
-        @inject('AuditService') private auditService: AuditService,
-        @inject('AIService') private aiService: AIService,
-        @inject('ExportService') private exportService: ExportService
+        @inject('PlannerRepository') private readonly plannerRepo: PlannerRepository,
+        @inject('UserRepository') private readonly userRepo: UserRepository,
+        @inject('SectionRepository') private readonly sectionRepo: SectionRepository,
+        @inject('ActivityRepository') private readonly activityRepo: ActivityRepository,
+        @inject('EmailService') private readonly email: EmailService,
+        @inject('QueueService') private readonly queue: QueueService,
+        @inject('AuditService') private readonly audit: AuditService,
+        @inject('AIService') private readonly ai: AIService,
     ) { }
 
-    /**
-     * Create new planner
-     */
-    async createPlanner(userId: string, data: CreatePlannerRequest): Promise<PlannerResponse> {
-        try {
-            // Validate user exists
-            const user = await this.userRepository.findById(userId);
-            if (!user) {
-                throw new NotFoundError('User not found');
-            }
+    /* =========================================================
+       CRUD
+    ========================================================= */
 
-            // Check user's plan limits
+    async createPlanner(userId: string, data: any): Promise<PlannerResponse> {
+        try {
+            const user = await this.userRepo.getProfile(userId);
+            if (!user) throw new AppError('User not found', 404, undefined, ErrorCode.USER_NOT_FOUND);
+
             await this.checkPlanLimits(userId);
 
-            // Create planner
             const planner: Planner = {
                 id: uuidv4(),
                 userId,
                 title: data.title,
                 description: data.description || '',
-                color: data.color || this.generateRandomColor(),
+                color: data.color || this.randomColor(),
                 icon: data.icon || 'default',
                 sections: [],
                 settings: {
                     isPublic: data.settings?.isPublic || false,
                     allowCollaboration: data.settings?.allowCollaboration || false,
                     autoArchive: data.settings?.autoArchive || false,
-                    reminderEnabled: data.settings?.reminderEnabled || true,
+                    reminderEnabled: data.settings?.reminderEnabled !== false,
                     defaultView: data.settings?.defaultView || 'grid',
-                    theme: data.settings?.theme || 'auto'
+                    theme: data.settings?.theme || 'auto',
                 },
                 collaborators: [],
                 tags: data.tags || [],
@@ -86,592 +69,331 @@ export class PlannerService {
                     schemaVersion: '1.0',
                     lastActivityAt: new Date(),
                     totalActivities: 0,
-                    completedActivities: 0
+                    completedActivities: 0,
                 },
                 createdAt: new Date(),
-                updatedAt: new Date()
+                updatedAt: new Date(),
             };
 
-            // Save planner
-            const createdPlanner = await this.plannerRepository.createPlanner(planner);
+            const created = await this.plannerRepo.createPlanner(planner);
+            await this.createDefaultSections(created.id, userId);
 
-            // Create default sections if none specified
-            if (data.sections && data.sections.length > 0) {
-                for (const sectionData of data.sections) {
-                    await this.sectionRepository.createSection({
-                        ...sectionData,
-                        plannerId: planner.id
-                    });
-                }
-            } else {
-                // Create default sections
-                await this.createDefaultSections(planner.id);
-            }
-
-            // Log activity
-            await this.logActivity(userId, 'PLANNER_CREATED', {
-                plannerId: planner.id,
-                title: planner.title
-            });
-
-            // Queue AI analysis for optimization suggestions
-            await this.queueService.addJob('analyzePlannerStructure', {
-                plannerId: planner.id,
-                userId
-            });
-
-            logger.info(`Planner created: ${planner.id} by user: ${userId}`);
+            await this.queue.addJob(
+                'planner',                       // queue name
+                'analyzePlannerStructure',       // job type
+                { plannerId: created.id, userId } // payload
+            );
+            this.logActivity(userId, 'PLANNER_CREATED', { plannerId: created.id, title: created.title });
 
             return {
-                planner: createdPlanner,
-                statistics: await this.getPlannerStatistics(planner.id),
-                permissions: this.getUserPermissions(createdPlanner, userId)
+                planner: created,
+                statistics: await this.getPlannerStatistics(created.id),
+                permissions: this.buildPermissions(created, userId),
             };
-
-        } catch (error) {
-            logger.error('Create planner failed:', error);
-            throw error;
+        } catch (err) {
+            logger.error('createPlanner error', { userId, data, err });
+            throw err; // already AppError or unexpected
         }
     }
 
-    /**
-     * Get planner by ID
-     */
     async getPlanner(plannerId: string, userId: string): Promise<PlannerResponse> {
         try {
-            // Get planner
-            const planner = await this.plannerRepository.findById(plannerId);
-            if (!planner) {
-                throw new NotFoundError('Planner not found');
-            }
+            const planner = await this.plannerRepo.findById(plannerId);
+            if (!planner) throw new AppError('Planner not found', 404, undefined, ErrorCode.NOT_FOUND);
 
-            // Check permissions
-            if (!this.hasAccess(planner, userId)) {
-                throw new ForbiddenError('Access denied to this planner');
-            }
+            if (!this.hasAccess(planner, userId))
+                throw new AppError('Access denied', 403, undefined, ErrorCode.UNAUTHORIZED);
 
-            // Update last activity
-            await this.plannerRepository.updatePlanner(plannerId, {
-                'metadata.lastActivityAt': new Date()
-            });
-
-            // Log activity
-            await this.logActivity(userId, 'PLANNER_VIEWED', {
-                plannerId
-            });
+            await this.plannerRepo.updatePlanner(plannerId, { 'metadata.lastActivityAt': new Date() } as any);
+            this.logActivity(userId, 'PLANNER_VIEWED', { plannerId });
 
             return {
                 planner,
                 statistics: await this.getPlannerStatistics(plannerId),
-                permissions: this.getUserPermissions(planner, userId)
+                permissions: this.buildPermissions(planner, userId),
             };
-
-        } catch (error) {
-            logger.error(`Get planner failed: ${plannerId}`, error);
-            throw error;
+        } catch (err) {
+            logger.error('getPlanner error', { plannerId, userId, err });
+            throw err;
         }
     }
 
-    /**
-     * List user's planners
-     */
-    async listPlanners(userId: string, filters: PlannerFilterRequest): Promise<any> {
+    async listPlanners(userId: string, filters: PlannerFilterRequest) {
         try {
-            // Get user's own planners
-            const ownPlanners = await this.plannerRepository.findByUserId(userId, filters);
-
-            // Get shared planners
-            const sharedPlanners = await this.plannerRepository.findSharedPlanners(userId, filters);
-
-            return {
-                own: ownPlanners,
-                shared: sharedPlanners
-            };
-
-        } catch (error) {
-            logger.error(`List planners failed for user: ${userId}`, error);
-            throw error;
+            const [own, shared] = await Promise.all([
+                this.plannerRepo.findByUserId(userId, filters),
+                this.plannerRepo.findSharedPlanners(userId, filters),
+            ]);
+            return { own, shared };
+        } catch (err) {
+            logger.error('listPlanners error', { userId, filters, err });
+            throw new AppError('Failed to list planners', 500, undefined, ErrorCode.DATABASE_CONNECTION_ERROR);
         }
     }
 
-    /**
-     * Update planner
-     */
-    async updatePlanner(plannerId: string, userId: string, data: UpdatePlannerRequest): Promise<PlannerResponse> {
+    async updatePlanner(plannerId: string, userId: string, updates: any): Promise<PlannerResponse> {
         try {
-            // Get planner
-            const planner = await this.plannerRepository.findById(plannerId);
-            if (!planner) {
-                throw new NotFoundError('Planner not found');
-            }
+            const planner = await this.plannerRepo.findById(plannerId);
+            if (!planner) throw new AppError('Planner not found', 404, undefined, ErrorCode.NOT_FOUND);
 
-            // Check permissions
-            if (!this.canEdit(planner, userId)) {
-                throw new ForbiddenError('You do not have permission to edit this planner');
-            }
+            if (!this.canEdit(planner, userId))
+                throw new AppError('No edit permission', 403, undefined, ErrorCode.UNAUTHORIZED);
 
-            // Update planner
-            const updatedPlanner = await this.plannerRepository.updatePlanner(plannerId, {
-                ...data,
-                'metadata.lastActivityAt': new Date()
-            });
+            const updated = await this.plannerRepo.updatePlanner(plannerId, {
+                ...updates,
+                'metadata.lastActivityAt': new Date(),
+            } as any);
 
-            // Log activity
-            await this.logActivity(userId, 'PLANNER_UPDATED', {
-                plannerId,
-                updatedFields: Object.keys(data)
-            });
+            this.logActivity(userId, 'PLANNER_UPDATED', { plannerId, fields: Object.keys(updates) });
 
             return {
-                planner: updatedPlanner,
+                planner: updated,
                 statistics: await this.getPlannerStatistics(plannerId),
-                permissions: this.getUserPermissions(updatedPlanner, userId)
+                permissions: this.buildPermissions(updated, userId),
             };
-
-        } catch (error) {
-            logger.error(`Update planner failed: ${plannerId}`, error);
-            throw error;
+        } catch (err) {
+            logger.error('updatePlanner error', { plannerId, userId, updates, err });
+            throw err;
         }
     }
 
-    /**
-     * Delete planner
-     */
     async deletePlanner(plannerId: string, userId: string): Promise<void> {
         try {
-            // Get planner
-            const planner = await this.plannerRepository.findById(plannerId);
-            if (!planner) {
-                throw new NotFoundError('Planner not found');
-            }
+            const planner = await this.plannerRepo.findById(plannerId);
+            if (!planner) throw new AppError('Planner not found', 404, undefined, ErrorCode.NOT_FOUND);
 
-            // Check permissions (only owner can delete)
-            if (planner.userId !== userId) {
-                throw new ForbiddenError('Only the owner can delete this planner');
-            }
+            if (planner.userId !== userId) throw new AppError('Only owner can delete', 403, undefined, ErrorCode.UNAUTHORIZED);
 
-            // Delete planner
-            await this.plannerRepository.deletePlanner(plannerId, userId);
-
-            // Log activity
-            await this.logActivity(userId, 'PLANNER_DELETED', {
-                plannerId,
-                title: planner.title
-            });
-
-            logger.info(`Planner deleted: ${plannerId} by user: ${userId}`);
-
-        } catch (error) {
-            logger.error(`Delete planner failed: ${plannerId}`, error);
-            throw error;
+            await this.plannerRepo.deletePlanner(plannerId, userId);
+            this.logActivity(userId, 'PLANNER_DELETED', { plannerId, title: planner.title });
+        } catch (err) {
+            logger.error('deletePlanner error', { plannerId, userId, err });
+            throw err;
         }
     }
 
-    /**
-     * Share planner
-     */
+    /* =========================================================
+       COLLABORATION
+    ========================================================= */
+
     async sharePlanner(plannerId: string, userId: string, data: SharePlannerRequest): Promise<void> {
         try {
-            // Get planner
-            const planner = await this.plannerRepository.findById(plannerId);
-            if (!planner) {
-                throw new NotFoundError('Planner not found');
-            }
+            const planner = await this.plannerRepo.findById(plannerId);
+            if (!planner) throw new AppError('Planner not found', 404, undefined, ErrorCode.NOT_FOUND);
+            if (!this.canShare(planner, userId)) throw new AppError('No share permission', 403, undefined, ErrorCode.UNAUTHORIZED);
 
-            // Check permissions
-            if (!this.canShare(planner, userId)) {
-                throw new ForbiddenError('You do not have permission to share this planner');
-            }
+            const target = await this.userRepo.getProfileByEmail(data.email);
+            if (!target) throw new AppError('User not found with this email', 404, undefined, ErrorCode.USER_NOT_FOUND);
 
-            // Find user to share with
-            const targetUser = await this.userRepository.findByEmail(data.email);
-            if (!targetUser) {
-                throw new NotFoundError('User not found with this email');
-            }
+            const exists = planner.collaborators.some(c => c.userId === target.uid);
+            if (exists) throw new AppError('User is already a collaborator', 400, undefined, ErrorCode.VALIDATION_ERROR);
 
-            // Check if already collaborator
-            const existingCollaborator = planner.collaborators.find(
-                c => c.userId === targetUser.uid
-            );
-
-            if (existingCollaborator) {
-                throw new BadRequestError('User is already a collaborator');
-            }
-
-            // Add collaborator
-            const collaborator = {
-                userId: targetUser.uid,
+            const collaborator: Collaborator = {
+                userId: target.uid,
                 role: data.role,
                 addedAt: new Date(),
-                addedBy: userId
+                addedBy: userId,
             };
 
-            await this.plannerRepository.addCollaborator(plannerId, collaborator);
+            await this.plannerRepo.addCollaborator(plannerId, collaborator);
 
-            // Send notification email
-            await this.emailService.sendPlannerShareNotification(
-                targetUser.email,
-                targetUser.displayName,
-                planner.title,
-                data.role,
-                data.message
-            );
+            const recipientName = target.displayName || 'Client';
+            const message = data.message || "Let's plan together"
 
-            // Log activity
-            await this.logActivity(userId, 'PLANNER_SHARED', {
-                plannerId,
-                sharedWith: targetUser.uid,
-                role: data.role
-            });
+            // fire-and-forget email
+            this.email.sendPlannerSharedEmail(target.email, recipientName, planner.title, data.role, message);
 
-            logger.info(`Planner ${plannerId} shared with ${targetUser.uid} as ${data.role}`);
-
-        } catch (error) {
-            logger.error(`Share planner failed: ${plannerId}`, error);
-            throw error;
+            this.logActivity(userId, 'PLANNER_SHARED', { plannerId, sharedWith: target.uid, role: data.role });
+        } catch (err) {
+            logger.error('sharePlanner error', { plannerId, userId, data, err });
+            throw err;
         }
     }
 
-    /**
-     * Remove collaborator
-     */
     async removeCollaborator(plannerId: string, userId: string, collaboratorId: string): Promise<void> {
         try {
-            // Get planner
-            const planner = await this.plannerRepository.findById(plannerId);
-            if (!planner) {
-                throw new NotFoundError('Planner not found');
-            }
+            const planner = await this.plannerRepo.findById(plannerId);
+            if (!planner) throw new AppError('Planner not found', 404, undefined, ErrorCode.NOT_FOUND);
+            if (!this.canManageCollaborators(planner, userId))
+                throw new AppError('No permission to manage collaborators', 403, undefined, ErrorCode.UNAUTHORIZED);
 
-            // Check permissions (owner or admin can remove collaborators)
-            if (!this.canManageCollaborators(planner, userId)) {
-                throw new ForbiddenError('You do not have permission to manage collaborators');
-            }
-
-            // Remove collaborator
-            await this.plannerRepository.removeCollaborator(plannerId, collaboratorId);
-
-            // Log activity
-            await this.logActivity(userId, 'COLLABORATOR_REMOVED', {
-                plannerId,
-                removedUserId: collaboratorId
-            });
-
-            logger.info(`Collaborator ${collaboratorId} removed from planner ${plannerId}`);
-
-        } catch (error) {
-            logger.error(`Remove collaborator failed: ${plannerId}`, error);
-            throw error;
+            await this.plannerRepo.removeCollaborator(plannerId, collaboratorId);
+            this.logActivity(userId, 'COLLABORATOR_REMOVED', { plannerId, removedUserId: collaboratorId });
+        } catch (err) {
+            logger.error('removeCollaborator error', { plannerId, userId, collaboratorId, err });
+            throw err;
         }
     }
 
-    /**
-     * Duplicate planner
-     */
+    /* =========================================================
+       ACTIONS
+    ========================================================= */
+
     async duplicatePlanner(plannerId: string, userId: string, data: DuplicatePlannerRequest): Promise<PlannerResponse> {
         try {
-            // Get original planner
-            const originalPlanner = await this.plannerRepository.findById(plannerId);
-            if (!originalPlanner) {
-                throw new NotFoundError('Original planner not found');
-            }
+            const original = await this.plannerRepo.findById(plannerId);
+            if (!original) throw new AppError('Original planner not found', 404, undefined, ErrorCode.NOT_FOUND);
+            if (!this.hasAccess(original, userId)) throw new AppError('Access denied', 403, undefined, ErrorCode.UNAUTHORIZED);
 
-            // Check permissions
-            if (!this.hasAccess(originalPlanner, userId)) {
-                throw new ForbiddenError('Access denied to this planner');
-            }
-
-            // Create new planner
-            const newPlanner: Planner = {
-                ...originalPlanner,
+            const copy: Planner = {
+                ...original,
                 id: uuidv4(),
                 userId,
-                title: data.title || `${originalPlanner.title} (Copy)`,
+                title: data.title || `${original.title} (Copy)`,
                 collaborators: [],
                 createdAt: new Date(),
                 updatedAt: new Date(),
-                metadata: {
-                    ...originalPlanner.metadata,
-                    lastActivityAt: new Date()
-                }
+                metadata: { ...original.metadata, lastActivityAt: new Date() },
             };
 
-            // Save new planner
-            const createdPlanner = await this.plannerRepository.createPlanner(newPlanner);
+            const created = await this.plannerRepo.createPlanner(copy);
 
-            // Duplicate sections and activities if requested
             if (data.includeSections !== false) {
-                const sections = await this.sectionRepository.findByPlannerId(plannerId);
-
-                for (const section of sections) {
-                    const newSection = await this.sectionRepository.createSection({
-                        ...section,
-                        id: uuidv4(),
-                        plannerId: newPlanner.id,
-                        createdAt: new Date(),
-                        updatedAt: new Date()
-                    });
-
-                    // Duplicate activities if requested
+                const sections = await this.sectionRepo.findByPlannerId(plannerId);
+                for (const s of sections) {
+                    const newSection = await this.sectionRepo.createSection({ ...s, id: uuidv4(), plannerId: copy.id });
                     if (data.includeActivities !== false) {
-                        const activities = await this.activityRepository.findBySectionId(section.id);
-
-                        for (const activity of activities) {
-                            await this.activityRepository.createActivity({
-                                ...activity,
-                                id: uuidv4(),
-                                sectionId: newSection.id,
-                                plannerId: newPlanner.id,
-                                createdAt: new Date(),
-                                updatedAt: new Date()
-                            });
+                        const activities = await this.activityRepo.findBySectionId(s.id);
+                        for (const a of activities) {
+                            await this.activityRepo.createActivity({ ...a, id: uuidv4(), sectionId: newSection.id, plannerId: copy.id });
                         }
                     }
                 }
             }
 
-            // Log activity
-            await this.logActivity(userId, 'PLANNER_DUPLICATED', {
-                originalPlannerId: plannerId,
-                newPlannerId: newPlanner.id
-            });
-
-            logger.info(`Planner duplicated: ${plannerId} -> ${newPlanner.id}`);
+            this.logActivity(userId, 'PLANNER_DUPLICATED', { originalPlannerId: plannerId, newPlannerId: copy.id });
 
             return {
-                planner: createdPlanner,
-                statistics: await this.getPlannerStatistics(newPlanner.id),
-                permissions: this.getUserPermissions(createdPlanner, userId)
+                planner: created,
+                statistics: await this.getPlannerStatistics(copy.id),
+                permissions: this.buildPermissions(created, userId),
             };
-
-        } catch (error) {
-            logger.error(`Duplicate planner failed: ${plannerId}`, error);
-            throw error;
+        } catch (err) {
+            logger.error('duplicatePlanner error', { plannerId, userId, data, err });
+            throw err;
         }
     }
 
-    /**
-     * Export planner
-     */
-    async exportPlanner(plannerId: string, userId: string, data: ExportPlannerRequest): Promise<any> {
+    async exportPlanner(plannerId: string, userId: string, data: ExportPlannerRequest) {
         try {
-            // Get planner
-            const planner = await this.plannerRepository.findById(plannerId);
-            if (!planner) {
-                throw new NotFoundError('Planner not found');
+            const planner = await this.plannerRepo.findById(plannerId);
+            if (!planner) throw new AppError('Planner not found', 404, undefined, ErrorCode.NOT_FOUND);
+            if (!this.hasAccess(planner, userId)) throw new AppError('Access denied', 403, undefined, ErrorCode.UNAUTHORIZED);
+    
+            let includeSections: string[] = [];
+            if (data.includeSections?.length) {
+                includeSections = data.includeSections.filter(id => typeof id === 'string') as string[];
             }
-
-            // Check permissions
-            if (!this.hasAccess(planner, userId)) {
-                throw new ForbiddenError('Access denied to this planner');
-            }
-
-            // Get sections and activities
-            const sections = data.includeSections && data.includeSections.length > 0
-                ? await this.sectionRepository.findByIds(data.includeSections)
-                : await this.sectionRepository.findByPlannerId(plannerId);
-
-            const activities = data.includeActivities !== false
-                ? await this.activityRepository.findByPlannerId(plannerId)
-                : [];
-
-            // Prepare export data
+    
+            const sections = includeSections.length
+                ? await this.sectionRepo.findByIds(includeSections)
+                : await this.sectionRepo.findByPlannerId(plannerId);
+    
+            const activities = data.includeActivities !== false ? await this.activityRepo.findByPlannerId(plannerId) : [];
+    
             const exportData = {
-                planner: {
-                    title: planner.title,
-                    description: planner.description,
-                    color: planner.color,
-                    icon: planner.icon,
-                    tags: planner.tags,
-                    exportedAt: new Date()
-                },
-                sections: sections.map(section => ({
-                    title: section.title,
-                    description: section.description,
-                    order: section.order,
-                    type: section.type
-                })),
-                activities: activities.map(activity => ({
-                    title: activity.title,
-                    description: activity.description,
-                    type: activity.type,
-                    status: activity.status,
-                    priority: activity.priority,
-                    dueDate: activity.dueDate,
-                    tags: activity.tags
-                }))
+                planner: { title: planner.title, description: planner.description, color: planner.color, icon: planner.icon, tags: planner.tags, exportedAt: new Date() },
+                sections: sections.map(s => ({ title: s.title, description: s.description, order: s.order, type: s.type })),
+                activities: activities.map(a => ({ title: a.title, description: a.description, type: a.type, status: a.status, priority: a.priority, dueDate: a.dueDate, tags: a.tags })),
             };
-
-            // Generate export file
-            const result = await this.exportService.generateExport(
-                data.format,
-                exportData,
-                data.template
-            );
-
-            // Log activity
-            await this.logActivity(userId, 'PLANNER_EXPORTED', {
-                plannerId,
-                format: data.format
-            });
-
-            logger.info(`Planner exported: ${plannerId} in ${data.format} format`);
-
+    
+            const result = await this.export.generateExport(data.format, exportData, data.template);
+    
+            this.logActivity(userId, 'PLANNER_EXPORTED', { plannerId, format: data.format });
+    
             return result;
-
-        } catch (error) {
-            logger.error(`Export planner failed: ${plannerId}`, error);
-            throw error;
+        } catch (err) {
+            logger.error('exportPlanner error', { plannerId, userId, data, err });
+            throw err;
         }
     }
 
-    /**
-     * Get planner statistics
-     */
-    async getPlannerStatistics(plannerId: string): Promise<PlannerStatistics> {
-        try {
-            return await this.plannerRepository.getPlannerStatistics(plannerId);
-        } catch (error) {
-            logger.error(`Get planner statistics failed: ${plannerId}`, error);
-            throw error;
-        }
-    }
-
-    /**
-     * Get AI suggestions for planner
-     */
-    async getAISuggestions(plannerId: string, userId: string): Promise<any> {
-        try {
-            // Get planner
-            const planner = await this.plannerRepository.findById(plannerId);
-            if (!planner) {
-                throw new NotFoundError('Planner not found');
-            }
-
-            // Check permissions
-            if (!this.hasAccess(planner, userId)) {
-                throw new ForbiddenError('Access denied to this planner');
-            }
-
-            // Get sections and activities
-            const sections = await this.sectionRepository.findByPlannerId(plannerId);
-            const activities = await this.activityRepository.findByPlannerId(plannerId);
-
-            // Get AI suggestions
-            const suggestions = await this.aiService.generatePlannerSuggestions({
-                planner,
-                sections,
-                activities,
-                userId
-            });
-
-            // Log activity
-            await this.logActivity(userId, 'AI_SUGGESTIONS_REQUESTED', {
-                plannerId
-            });
-
-            return suggestions;
-
-        } catch (error) {
-            logger.error(`Get AI suggestions failed: ${plannerId}`, error);
-            throw error;
-        }
-    }
-
-    /**
-     * Archive planner
-     */
     async archivePlanner(plannerId: string, userId: string): Promise<void> {
         try {
-            // Get planner
-            const planner = await this.plannerRepository.findById(plannerId);
-            if (!planner) {
-                throw new NotFoundError('Planner not found');
-            }
+            const planner = await this.plannerRepo.findById(plannerId);
+            if (!planner) throw new AppError('Planner not found', 404, undefined, ErrorCode.NOT_FOUND);
+            if (!this.canArchive(planner, userId)) throw new AppError('No archive permission', 403, undefined, ErrorCode.UNAUTHORIZED);
 
-            // Check permissions
-            if (!this.canArchive(planner, userId)) {
-                throw new ForbiddenError('You do not have permission to archive this planner');
-            }
-
-            // Archive planner
-            await this.plannerRepository.archivePlanner(plannerId);
-
-            // Log activity
-            await this.logActivity(userId, 'PLANNER_ARCHIVED', {
-                plannerId
-            });
-
-            logger.info(`Planner archived: ${plannerId}`);
-
-        } catch (error) {
-            logger.error(`Archive planner failed: ${plannerId}`, error);
-            throw error;
+            await this.plannerRepo.archivePlanner(plannerId);
+            this.logActivity(userId, 'PLANNER_ARCHIVED', { plannerId });
+        } catch (err) {
+            logger.error('archivePlanner error', { plannerId, userId, err });
+            throw err;
         }
     }
 
-    /**
-     * Unarchive planner
-     */
     async unarchivePlanner(plannerId: string, userId: string): Promise<void> {
         try {
-            // Get planner
-            const planner = await this.plannerRepository.findById(plannerId);
-            if (!planner) {
-                throw new NotFoundError('Planner not found');
-            }
+            const planner = await this.plannerRepo.findById(plannerId);
+            if (!planner) throw new AppError('Planner not found', 404, undefined, ErrorCode.NOT_FOUND);
+            if (!this.canArchive(planner, userId)) throw new AppError('No unarchive permission', 403, undefined, ErrorCode.UNAUTHORIZED);
 
-            // Check permissions
-            if (!this.canArchive(planner, userId)) {
-                throw new ForbiddenError('You do not have permission to unarchive this planner');
-            }
-
-            // Unarchive planner
-            await this.plannerRepository.unarchivePlanner(plannerId);
-
-            // Log activity
-            await this.logActivity(userId, 'PLANNER_UNARCHIVED', {
-                plannerId
-            });
-
-            logger.info(`Planner unarchived: ${plannerId}`);
-
-        } catch (error) {
-            logger.error(`Unarchive planner failed: ${plannerId}`, error);
-            throw error;
+            await this.plannerRepo.unarchivePlanner(plannerId);
+            this.logActivity(userId, 'PLANNER_UNARCHIVED', { plannerId });
+        } catch (err) {
+            logger.error('unarchivePlanner error', { plannerId, userId, err });
+            throw err;
         }
     }
 
-    // Helper methods
-    private hasAccess(planner: Planner, userId: string): boolean {
-        return planner.userId === userId ||
-            planner.collaborators.some(c => c.userId === userId) ||
-            planner.settings.isPublic;
+    async getPlannerStatistics(plannerId: string): Promise<PlannerStatistics> {
+        try {
+            return await this.plannerRepo.getPlannerStatistics(plannerId);
+        } catch (err) {
+            logger.error('getPlannerStatistics error', { plannerId, err });
+            throw new AppError('Failed to compute statistics', 500, undefined, ErrorCode.DATABASE_CONNECTION_ERROR);
+        }
     }
 
-    private canEdit(planner: Planner, userId: string): boolean {
-        return planner.userId === userId ||
-            planner.collaborators.some(c => c.userId === userId &&
-                (c.role === 'editor' || c.role === 'admin'));
+    async getAISuggestions(plannerId: string, userId: string): Promise<any> {
+        try {
+            const planner = await this.plannerRepo.findById(plannerId);
+            if (!planner) throw new AppError('Planner not found', 404, undefined, ErrorCode.NOT_FOUND);
+            if (!this.hasAccess(planner, userId)) throw new AppError('Access denied', 403, undefined, ErrorCode.UNAUTHORIZED);
+
+            const [sections, activities] = await Promise.all([
+                this.sectionRepo.findByPlannerId(plannerId),
+                this.activityRepo.findByPlannerId(plannerId),
+            ]);
+
+            const suggestions = await this.ai.generatePlannerSuggestions({ planner, sections, activities, userId });
+
+            this.logActivity(userId, 'AI_SUGGESTIONS_REQUESTED', { plannerId });
+
+            return suggestions;
+        } catch (err) {
+            logger.error('getAISuggestions error', { plannerId, userId, err });
+            throw err;
+        }
     }
 
-    private canShare(planner: Planner, userId: string): boolean {
-        return planner.userId === userId ||
-            planner.collaborators.some(c => c.userId === userId && c.role === 'admin');
+    /* =========================================================
+       Helpers
+    ========================================================= */
+
+    private hasAccess(p: Planner, userId: string): boolean {
+        return p.userId === userId || p.collaborators.some(c => c.userId === userId) || p.settings.isPublic;
     }
 
-    private canManageCollaborators(planner: Planner, userId: string): boolean {
-        return planner.userId === userId ||
-            planner.collaborators.some(c => c.userId === userId && c.role === 'admin');
+    private canEdit(p: Planner, userId: string): boolean {
+        return p.userId === userId || p.collaborators.some(c => c.userId === userId && (c.role === 'editor' || c.role === 'admin'));
     }
 
-    private canArchive(planner: Planner, userId: string): boolean {
-        return planner.userId === userId;
+    private canShare(p: Planner, userId: string): boolean {
+        return p.userId === userId || p.collaborators.some(c => c.userId === userId && c.role === 'admin');
     }
 
-    private getUserPermissions(planner: Planner, userId: string): UserPermissions {
-        const isOwner = planner.userId === userId;
-        const collaborator = planner.collaborators.find(c => c.userId === userId);
+    private canManageCollaborators(p: Planner, userId: string): boolean {
+        return p.userId === userId || p.collaborators.some(c => c.userId === userId && c.role === 'admin');
+    }
+
+    private canArchive(p: Planner, userId: string): boolean {
+        return p.userId === userId;
+    }
+
+    private buildPermissions(p: Planner, userId: string): any {
+        const isOwner = p.userId === userId;
+        const collab = p.collaborators.find(c => c.userId === userId);
 
         let role: 'owner' | 'admin' | 'editor' | 'viewer' = 'viewer';
         let canEdit = false;
@@ -681,115 +403,61 @@ export class PlannerService {
 
         if (isOwner) {
             role = 'owner';
-            canEdit = true;
-            canDelete = true;
-            canShare = true;
-            canArchive = true;
-        } else if (collaborator) {
-            role = collaborator.role as any;
-            canEdit = collaborator.role === 'editor' || collaborator.role === 'admin';
-            canDelete = false;
-            canShare = collaborator.role === 'admin';
-            canArchive = false;
+            canEdit = canDelete = canShare = canArchive = true;
+        } else if (collab) {
+            role = collab.role as any;
+            canEdit = collab.role === 'editor' || collab.role === 'admin';
+            canShare = collab.role === 'admin';
         }
 
-        return {
-            canEdit,
-            canDelete,
-            canShare,
-            canArchive,
-            role
-        };
+        return { canEdit, canDelete, canShare, canArchive, role };
     }
 
     private async checkPlanLimits(userId: string): Promise<void> {
-        const user = await this.userRepository.findById(userId);
-        if (!user) {
-            throw new NotFoundError('User not found');
-        }
+        const user = await this.userRepo.getProfile(userId);
+        if (!user) throw new AppError('User not found', 404, undefined, ErrorCode.USER_NOT_FOUND);
 
-        const plan = user.subscription.plan;
-        const currentPlanners = user.statistics.totalPlanners;
+        const plan = user.subscription?.plan || 'free';
+        const current = user.statistics?.totalPlanners || 0;
 
-        const limits = {
-            free: 3,
-            premium: 50,
-            enterprise: -1 // unlimited
-        };
+        const limits: Record<string, number> = { free: 3, premium: 50, enterprise: -1 };
+        const limit = limits[plan] ?? limits.free;
 
-        const limit = limits[plan] || limits.free;
-        if (limit !== -1 && currentPlanners >= limit) {
-            throw new ForbiddenError(
-                `You have reached the maximum number of planners for your ${plan} plan. Upgrade to create more planners.`
-            );
-        }
+        if (limit !== -1 && current >= limit)
+            throw new AppError(`Plan limit reached (${plan})`, 403, undefined, ErrorCode.QUOTA_EXCEEDED);
     }
 
-    private async createDefaultSections(plannerId: string): Promise<void> {
-        const defaultSections = [
-            {
-                title: 'To Do',
-                description: 'Tasks that need to be done',
-                order: 1,
-                type: 'tasks' as const,
-                settings: {
-                    collapsed: false,
-                    color: '#EF4444',
-                    icon: 'list',
-                    visibility: 'visible' as const
-                }
-            },
-            {
-                title: 'In Progress',
-                description: 'Tasks currently being worked on',
-                order: 2,
-                type: 'tasks' as const,
-                settings: {
-                    collapsed: false,
-                    color: '#F59E0B',
-                    icon: 'clock',
-                    visibility: 'visible' as const
-                }
-            },
-            {
-                title: 'Done',
-                description: 'Completed tasks',
-                order: 3,
-                type: 'tasks' as const,
-                settings: {
-                    collapsed: false,
-                    color: '#10B981',
-                    icon: 'check',
-                    visibility: 'visible' as const
-                }
-            }
+    private async createDefaultSections(plannerId: string, userId: string): Promise<void> {
+        const defaults = [
+            { title: 'To Do', description: 'Tasks that need to be done', order: 1, type: 'tasks' as const, settings: { collapsed: false, color: '#EF4444', icon: 'list', visibility: 'visible' as const } },
+            { title: 'In Progress', description: 'Tasks currently being worked on', order: 2, type: 'tasks' as const, settings: { collapsed: false, color: '#F59E0B', icon: 'clock', visibility: 'visible' as const } },
+            { title: 'Done', description: 'Completed tasks', order: 3, type: 'tasks' as const, settings: { collapsed: false, color: '#10B981', icon: 'check', visibility: 'visible' as const } },
         ];
-
-        for (const sectionData of defaultSections) {
-            await this.sectionRepository.createSection({
-                ...sectionData,
+    
+        for (const s of defaults) {
+            await this.sectionRepo.createSection({
+                ...s,
                 id: uuidv4(),
-                plannerId
+                plannerId,
+                activities: [], // Add default activities array
+                metadata: { // Add default metadata object
+                    totalActivities: 0,
+                    completedActivities: 0,
+                    lastActivityAt: new Date(),
+                },
+                createdAt: new Date(), // Add default createdAt date
+                updatedAt: new Date(), // Add default updatedAt date
+                createdBy: userId,     // Add default createdBy user ID
             });
         }
     }
 
-    private generateRandomColor(): string {
+    private randomColor(): string {
         const colors = ['#3B82F6', '#EF4444', '#10B981', '#F59E0B', '#8B5CF6', '#EC4899'];
         return colors[Math.floor(Math.random() * colors.length)];
     }
 
-    private async logActivity(userId: string, action: string, metadata: any): Promise<void> {
-        try {
-            await this.auditService.logActivity({
-                userId,
-                action,
-                metadata,
-                timestamp: new Date()
-            });
-        } catch (error) {
-            logger.error('Failed to log activity:', error);
-            // Don't throw - logging failure shouldn't break the main flow
-        }
+    private logActivity(userId: string, action: string, meta: any): void {
+        this.audit.logActivity({ userId, action, metadata: meta, timestamp: new Date() }).catch((e: any) => logger.error('audit log failed', e));
     }
 }

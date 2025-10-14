@@ -1,5 +1,7 @@
-// src/modules/activity/activity.types.ts
+import { Attachment } from "nodemailer/lib/mailer";
+import { AISuggestion, RecurringSettings, Reminder } from "../planner/planner.types";
 
+/*  DOMAIN-SPECIFIC ACTIVITY TYPES  */
 export interface Activity {
     id: string;
     sectionId: string;
@@ -16,76 +18,31 @@ export interface Activity {
     aiSuggestions: AISuggestion[];
     metadata: ActivityMetadata;
     recurring?: RecurringSettings;
-    assignee?: string; // userId if assigned to someone
-    dependencies: string[]; // activity IDs this activity depends on
+    assignee?: string;
+    dependencies: string[];
     reminders: Reminder[];
     createdAt: Date;
     updatedAt: Date;
     createdBy: string;
+    order: number;
 }
-
 export type ActivityType = 'task' | 'event' | 'note' | 'goal' | 'habit' | 'milestone';
 export type ActivityStatus = 'pending' | 'in-progress' | 'completed' | 'cancelled' | 'archived';
 export type ActivityPriority = 'low' | 'medium' | 'high' | 'urgent';
 
-export interface Attachment {
-    id: string;
-    name: string;
-    url: string;
-    type: string;
-    size: number;
-    uploadedAt: Date;
-    uploadedBy: string;
-}
-
-export interface AISuggestion {
-    id: string;
-    suggestion: string;
-    type: AISuggestionType;
-    confidence: number;
-    accepted: boolean;
-    createdAt: Date;
-    aiProvider: 'openai' | 'anthropic' | 'gemini';
-}
-
-export type AISuggestionType = 'time_estimate' | 'priority' | 'category' | 'schedule' | 'breakdown' | 'optimize';
-
 export interface ActivityMetadata {
-    estimatedDuration?: number; // minutes
-    actualDuration?: number; // minutes
-    difficulty?: number; // 1-5 scale
-    energyLevel?: number; // 1-5 scale
-    focusTime?: number; // minutes
+    estimatedDuration?: number;
+    actualDuration?: number;
+    difficulty?: number;
+    energyLevel?: number;
+    focusTime?: number;
     interruptions?: number;
     notes?: string;
     location?: string;
     cost?: number;
     customFields?: Record<string, any>;
 }
-
-export interface RecurringSettings {
-    frequency: RecurringFrequency;
-    interval: number;
-    daysOfWeek?: number[]; // 0-6 (Sunday-Saturday)
-    daysOfMonth?: number[]; // 1-31
-    months?: number[]; // 1-12
-    endDate?: Date;
-    occurrences?: number;
-    nextOccurrence?: Date;
-}
-
-export type RecurringFrequency = 'daily' | 'weekly' | 'monthly' | 'yearly' | 'custom';
-
-export interface Reminder {
-    id: string;
-    type: 'email' | 'push' | 'sms';
-    timeBefore: number; // minutes before due date
-    message?: string;
-    isActive: boolean;
-    createdAt: Date;
-}
-
-// Request Types
+/*  API  */
 export interface CreateActivityRequest {
     title: string;
     description?: string;
@@ -145,17 +102,14 @@ export interface BulkActivityDeleteRequest {
 }
 
 export interface ActivityReorderRequest {
-    activities: Array<{
-        id: string;
-        order: number;
-    }>;
+    activities: Array<{ id: string; order: number }>;
 }
 
-// Response Types
+/*  RESPONSE  */
 export interface ActivityResponse {
     activity: Activity;
     statistics?: ActivityStatistics;
-    dependencies: Activity[]; // Full dependency objects
+    dependencies: Activity[];
     assigneeInfo?: {
         userId: string;
         displayName: string;
@@ -174,33 +128,33 @@ export interface ActivityListResponse {
 }
 
 export interface ActivityStatistics {
-    completionRate: number; // percentage
-    averageCompletionTime?: number; // minutes
-    totalTimeSpent?: number; // minutes
+    completionRate: number;
+    averageCompletionTime?: number;
+    totalTimeSpent?: number;
     overdueCount: number;
     upcomingCount: number;
-    activitiesByStatus: Record<ActivityStatus, number>;
-    activitiesByPriority: Record<ActivityPriority, number>;
-    activitiesByType: Record<ActivityType, number>;
+    activitiesByStatus: Record<string, number>;
+    activitiesByPriority: Record<string, number>;
+    activitiesByType: Record<string, number>;
 }
 
-// AI Integration Types
+/*  AI / ANALYTICS  */
 export interface AIActivityAnalysis {
-    complexity: number; // 1-10 scale
-    estimatedDuration: number; // minutes
+    complexity: number;
+    estimatedDuration: number;
     suggestedPriority: ActivityPriority;
     suggestedSchedule?: {
-        bestTime: string; // "morning" | "afternoon" | "evening"
-        bestDay: number; // 0-6 (Sunday-Saturday)
+        bestTime: string;
+        bestDay: number;
         reasoning: string;
     };
     breakdown?: {
         steps: string[];
         estimatedTimePerStep: number[];
     };
-    relatedActivities?: string[]; // activity IDs
-    energyLevel: number; // 1-5 scale
-    focusRequired: number; // 1-5 scale
+    relatedActivities?: string[];
+    energyLevel: number;
+    focusRequired: number;
 }
 
 export interface ActivityInsights {
@@ -209,27 +163,23 @@ export interface ActivityInsights {
     bestPerformanceTime: string;
     averageCompletionRate: number;
     suggestedImprovements: string[];
-    similarActivities: Array<{
-        activityId: string;
-        similarity: number;
-        title: string;
-    }>;
+    similarActivities: Array<{ activityId: string; similarity: number; title: string }>;
 }
 
-// Time Tracking Types
+/*  TIME TRACKING  */
 export interface TimeEntry {
     id: string;
     activityId: string;
     startTime: Date;
     endTime?: Date;
-    duration?: number; // minutes
+    duration?: number;
     description?: string;
     isActive: boolean;
     createdAt: Date;
 }
 
 export interface TimeTrackingSummary {
-    totalTime: number; // minutes
+    totalTime: number;
     activeEntries: TimeEntry[];
     todayTime: number;
     thisWeekTime: number;
@@ -237,7 +187,7 @@ export interface TimeTrackingSummary {
     averageSessionDuration: number;
 }
 
-// Collaboration Types
+/*  COLLABORATION  */
 export interface ActivityComment {
     id: string;
     activityId: string;
@@ -245,7 +195,7 @@ export interface ActivityComment {
     content: string;
     createdAt: Date;
     updatedAt?: Date;
-    mentions?: string[]; // userIds
+    mentions?: string[];
     attachments?: Attachment[];
 }
 
@@ -253,10 +203,7 @@ export interface ActivityHistory {
     id: string;
     activityId: string;
     action: string;
-    changes: Record<string, {
-        old: any;
-        new: any;
-    }>;
+    changes: Record<string, { old: any; new: any }>;
     userId: string;
     timestamp: Date;
     metadata?: any;

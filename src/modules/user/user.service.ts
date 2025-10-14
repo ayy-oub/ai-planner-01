@@ -1,6 +1,5 @@
 import { injectable, inject } from 'tsyringe';
 const { v4: uuidv4 } = require('uuid');
-import { Timestamp } from 'firebase-admin/firestore';
 import { UserRepository } from './user.repository';
 import { CacheService } from '../../shared/services/cache.service';
 import { EmailService } from '../../shared/services/email.service';

@@ -1,6 +1,9 @@
 // src/modules/activity/activity.repository.ts
 import { injectable } from 'tsyringe';
-import { FirebaseRepository } from '../../shared/repository/firebase.repository';
+import { Timestamp, FieldValue } from 'firebase-admin/firestore';
+import { AppError, ErrorCode } from '../../shared/utils/errors';
+import { logger } from '../../shared/utils/logger';
+import firebaseConnection from '../../infrastructure/database/firebase';
 import { CacheService } from '../../shared/services/cache.service';
 import {
     Activity,
@@ -11,173 +14,135 @@ import {
     ActivityPriority,
     ActivityType,
     TimeEntry,
-    ActivityComment,
-    ActivityHistory
 } from './activity.types';
-import { logger } from '../../shared/utils/logger';
-import { config } from '../../shared/config';
+
+const firestore = firebaseConnection.getDatabase();
 
 @injectable()
-export class ActivityRepository extends FirebaseRepository<Activity> {
-    constructor(cacheService: CacheService) {
-        super('activities', cacheService);
-    }
+export class ActivityRepository {
+    private readonly activityColl = firestore.collection('activities');
 
-    /**
-     * Create activity
-     */
-    async createActivity(activity: Activity): Promise<Activity> {
+    constructor(private readonly cacheService: CacheService) { }
+
+    /* ------------------------------------------------------------------ */
+    /*  Core CRUD                                                         */
+    /* ------------------------------------------------------------------ */
+
+    async createActivity(a: Activity): Promise<Activity> {
         try {
-            const docRef = this.collection.doc(activity.id);
-            await docRef.set({
-                ...activity,
-                createdAt: new Date(),
-                updatedAt: new Date()
-            });
+            const payload = { ...a, createdAt: Timestamp.now(), updatedAt: Timestamp.now() } as any;
+            await this.activityColl.doc(a.id).set(payload);
 
-            // Cache the activity
-            await this.cacheService.set(
-                `activity:${activity.id}`,
-                activity,
-                config.cache.ttl.activity
-            );
+            await this.cacheService.set(`activity:${a.id}`, payload, { ttl: 300 });
+            await this.cacheService.delete(`section-activities:${a.sectionId}`);
 
-            // Update section's activity list cache
-            await this.cacheService.delete(`section-activities:${activity.sectionId}`);
-
-            logger.info(`Activity created: ${activity.id}`);
-            return activity;
-
-        } catch (error) {
-            logger.error('Create activity failed:', error);
-            throw error;
+            logger.info(`Activity created: ${a.id}`);
+            return a;
+        } catch (err) {
+            logger.error('createActivity error', err);
+            throw new AppError('Failed to create activity', 500, undefined, ErrorCode.DATABASE_CONNECTION_ERROR);
         }
     }
 
-    /**
-     * Find activity by ID
-     */
     async findById(activityId: string): Promise<Activity | null> {
         try {
-            // Check cache first
-            const cached = await this.cacheService.get<Activity>(`activity:${activityId}`);
-            if (cached) {
-                return cached;
-            }
+            const cached = await this.cacheService.get(`activity:${activityId}`);
+            if (cached) return cached as Activity;
 
-            // Fetch from database
-            const doc = await this.collection.doc(activityId).get();
-            if (!doc.exists) {
-                return null;
-            }
+            const snap = await this.activityColl.doc(activityId).get();
+            if (!snap.exists) return null;
 
-            const activity = doc.data() as Activity;
-
-            // Cache the result
-            await this.cacheService.set(
-                `activity:${activityId}`,
-                activity,
-                config.cache.ttl.activity
-            );
-
-            return activity;
-
-        } catch (error) {
-            logger.error(`Find activity by ID failed: ${activityId}`, error);
-            throw error;
+            const data = { id: snap.id, ...snap.data() } as Activity;
+            await this.cacheService.set(`activity:${activityId}`, data, { ttl: 300 });
+            return data;
+        } catch (err) {
+            logger.error('findById error', { activityId, err });
+            throw new AppError('Failed to fetch activity', 500, undefined, ErrorCode.DATABASE_CONNECTION_ERROR);
         }
     }
 
-    /**
-     * Find activities by section ID
-     */
+    async updateActivity(activityId: string, updates: Partial<Activity>): Promise<Activity> {
+        try {
+            const updateData = { ...updates, updatedAt: Timestamp.now() } as any;
+            await this.activityColl.doc(activityId).update(updateData);
+
+            // Invalidate cache and refresh
+            await this.cacheService.delete(`activity:${activityId}`);
+            const updated = (await this.findById(activityId))!;
+            if (!updated) throw new AppError('Activity not found after update', 404);
+
+            await this.cacheService.set(`activity:${activityId}`, updated, { ttl: 300 });
+            await this.cacheService.delete(`section-activities:${updated.sectionId}`);
+            await this.cacheService.delete(`section-stats:${updated.sectionId}`);
+
+            logger.info(`Activity updated: ${activityId}`);
+            return updated;
+        } catch (err) {
+            logger.error('updateActivity error', { activityId, updates, err });
+            throw new AppError('Failed to update activity', 500, undefined, ErrorCode.DATABASE_CONNECTION_ERROR);
+        }
+    }
+
+    async deleteActivity(activityId: string): Promise<void> {
+        try {
+            const activity = await this.findById(activityId);
+            await this.activityColl.doc(activityId).delete();
+
+            await this.cacheService.delete(`activity:${activityId}`);
+            if (activity) {
+                await this.cacheService.delete(`section-activities:${activity.sectionId}`);
+                await this.cacheService.delete(`section-stats:${activity.sectionId}`);
+            }
+
+            logger.info(`Activity deleted: ${activityId}`);
+        } catch (err) {
+            logger.error('deleteActivity error', { activityId, err });
+            throw new AppError('Failed to delete activity', 500, undefined, ErrorCode.DATABASE_CONNECTION_ERROR);
+        }
+    }
+
+    /* ------------------------------------------------------------------ */
+    /*  Finders / Lists                                                    */
+    /* ------------------------------------------------------------------ */
+
     async findBySectionId(sectionId: string): Promise<Activity[]> {
         try {
-            // Check cache first
             const cacheKey = `section-activities:${sectionId}`;
-            const cached = await this.cacheService.get<Activity[]>(cacheKey);
-            if (cached) {
-                return cached;
-            }
+            const cached = await this.cacheService.get(cacheKey);
+            if (cached) return cached as Activity[];
 
-            // Fetch from database
-            const snapshot = await this.collection
-                .where('sectionId', '==', sectionId)
-                .orderBy('order', 'asc')
-                .get();
+            const snap = await this.activityColl.where('sectionId', '==', sectionId).orderBy('order', 'asc').get();
+            const activities = snap.docs.map(d => ({ id: d.id, ...d.data() } as Activity));
 
-            const activities: Activity[] = [];
-            snapshot.forEach((doc) => {
-                activities.push(doc.data() as Activity);
-            });
-
-            // Cache the result
-            await this.cacheService.set(
-                cacheKey,
-                activities,
-                config.cache.ttl.activityList
-            );
-
+            await this.cacheService.set(cacheKey, activities, { ttl: 300 });
             return activities;
-
-        } catch (error) {
-            logger.error(`Find activities by section ID failed: ${sectionId}`, error);
-            throw error;
+        } catch (err) {
+            logger.error('findBySectionId error', { sectionId, err });
+            throw new AppError('Failed to fetch activities', 500, undefined, ErrorCode.DATABASE_CONNECTION_ERROR);
         }
     }
 
-    /**
-     * Find activities by planner ID
-     */
     async findByPlannerId(plannerId: string): Promise<Activity[]> {
         try {
-            const snapshot = await this.collection
-                .where('plannerId', '==', plannerId)
-                .get();
-
-            const activities: Activity[] = [];
-            snapshot.forEach((doc) => {
-                activities.push(doc.data() as Activity);
-            });
-
-            return activities;
-
-        } catch (error) {
-            logger.error(`Find activities by planner ID failed: ${plannerId}`, error);
-            throw error;
+            const snap = await this.activityColl.where('plannerId', '==', plannerId).get();
+            return snap.docs.map(d => ({ id: d.id, ...d.data() } as Activity));
+        } catch (err) {
+            logger.error('findByPlannerId error', { plannerId, err });
+            throw new AppError('Failed to fetch activities by planner', 500, undefined, ErrorCode.DATABASE_CONNECTION_ERROR);
         }
     }
 
-    /**
-     * Find activities by IDs
-     */
     async findByIds(activityIds: string[]): Promise<Activity[]> {
         try {
-            if (activityIds.length === 0) {
-                return [];
-            }
-
-            // Fetch from database
-            const snapshot = await this.collection
-                .where('__name__', 'in', activityIds)
-                .get();
-
-            const activities: Activity[] = [];
-            snapshot.forEach((doc) => {
-                activities.push(doc.data() as Activity);
-            });
-
-            return activities;
-
-        } catch (error) {
-            logger.error(`Find activities by IDs failed: ${activityIds.join(', ')}`, error);
-            throw error;
+            if (!activityIds.length) return [];
+            const snap = await this.activityColl.where('__name__', 'in', activityIds).get();
+            return snap.docs.map(d => ({ id: d.id, ...d.data() } as Activity));
+        } catch (err) {
+            logger.error('findByIds error', { activityIds, err });
+            throw new AppError('Failed to fetch activities by ids', 500, undefined, ErrorCode.DATABASE_CONNECTION_ERROR);
         }
     }
 
-    /**
-     * Find activities with filters
-     */
     async findWithFilters(filters: ActivityFilterRequest): Promise<ActivityListResponse> {
         try {
             const {
@@ -196,82 +161,33 @@ export class ActivityRepository extends FirebaseRepository<Activity> {
                 sortBy = 'createdAt',
                 sortOrder = 'desc',
                 page = 1,
-                limit = 20
+                limit = 20,
             } = filters;
 
             const offset = (page - 1) * limit;
+            let q: FirebaseFirestore.Query = this.activityColl as any;
 
-            // Build query
-            let query: any = this.collection;
+            if (sectionId) q = q.where('sectionId', '==', sectionId);
+            if (plannerId) q = q.where('plannerId', '==', plannerId);
+            if (status && status.length) q = q.where('status', 'in', status);
+            if (priority && priority.length) q = q.where('priority', 'in', priority);
+            if (type && type.length) q = q.where('type', 'in', type);
+            if (tags && tags.length) q = q.where('tags', 'array-contains-any', tags);
+            if (assignee && assignee.length) q = q.where('assignee', 'in', assignee);
+            if (dueDateFrom) q = q.where('dueDate', '>=', dueDateFrom);
+            if (dueDateTo) q = q.where('dueDate', '<=', dueDateTo);
+            if (completedFrom) q = q.where('completedAt', '>=', completedFrom);
+            if (completedTo) q = q.where('completedAt', '<=', completedTo);
 
-            // Apply filters
-            if (sectionId) {
-                query = query.where('sectionId', '==', sectionId);
-            }
+            if (search) q = q.where('title', '>=', search).where('title', '<=', search + '\uf8ff');
 
-            if (plannerId) {
-                query = query.where('plannerId', '==', plannerId);
-            }
+            q = q.orderBy(sortBy, sortOrder === 'asc' ? 'asc' : 'desc');
 
-            if (status && status.length > 0) {
-                query = query.where('status', 'in', status);
-            }
+            const totalSnap = await q.count().get();
+            const total = totalSnap.data().count;
+            const snap = await q.limit(limit).offset(offset).get();
 
-            if (priority && priority.length > 0) {
-                query = query.where('priority', 'in', priority);
-            }
-
-            if (type && type.length > 0) {
-                query = query.where('type', 'in', type);
-            }
-
-            if (tags && tags.length > 0) {
-                query = query.where('tags', 'array-contains-any', tags);
-            }
-
-            if (assignee && assignee.length > 0) {
-                query = query.where('assignee', 'in', assignee);
-            }
-
-            if (dueDateFrom) {
-                query = query.where('dueDate', '>=', dueDateFrom);
-            }
-
-            if (dueDateTo) {
-                query = query.where('dueDate', '<=', dueDateTo);
-            }
-
-            if (completedFrom) {
-                query = query.where('completedAt', '>=', completedFrom);
-            }
-
-            if (completedTo) {
-                query = query.where('completedAt', '<=', completedTo);
-            }
-
-            if (search) {
-                // For text search, we need to use a different approach
-                // This is a simplified version - in production, consider using Algolia or Elasticsearch
-                query = query.where('title', '>=', search).where('title', '<=', search + '\uf8ff');
-            }
-
-            // Apply sorting
-            query = query.orderBy(sortBy, sortOrder);
-
-            // Get total count
-            const countSnapshot = await query.count().get();
-            const total = countSnapshot.data().count;
-
-            // Apply pagination
-            query = query.limit(limit).offset(offset);
-
-            // Execute query
-            const snapshot = await query.get();
-            const activities: Activity[] = [];
-
-            snapshot.forEach((doc) => {
-                activities.push(doc.data() as Activity);
-            });
+            const activities = snap.docs.map(d => ({ id: d.id, ...d.data() } as Activity));
 
             return {
                 activities,
@@ -280,250 +196,138 @@ export class ActivityRepository extends FirebaseRepository<Activity> {
                 limit,
                 hasNext: offset + limit < total,
                 hasPrev: page > 1,
-                filters
+                filters,
             };
-
-        } catch (error) {
-            logger.error('Find activities with filters failed:', error);
-            throw error;
+        } catch (err) {
+            logger.error('findWithFilters error', { filters, err });
+            throw new AppError('Failed to fetch activities', 500, undefined, ErrorCode.DATABASE_CONNECTION_ERROR);
         }
     }
 
-    /**
-     * Update activity
-     */
-    async updateActivity(activityId: string, updates: Partial<Activity>): Promise<Activity> {
-        try {
-            const updateData = {
-                ...updates,
-                updatedAt: new Date()
-            };
+    /* ------------------------------------------------------------------ */
+    /*  Bulk operations                                                    */
+    /* ------------------------------------------------------------------ */
 
-            // Update document
-            await this.collection.doc(activityId).update(updateData);
-
-            // Get updated activity
-            const updatedActivity = await this.findById(activityId);
-            if (!updatedActivity) {
-                throw new Error('Activity not found after update');
-            }
-
-            // Update cache
-            await this.cacheService.set(
-                `activity:${activityId}`,
-                updatedActivity,
-                config.cache.ttl.activity
-            );
-
-            // Invalidate related caches
-            await this.cacheService.delete(`section-activities:${updatedActivity.sectionId}`);
-            await this.cacheService.delete(`section-stats:${updatedActivity.sectionId}`);
-
-            logger.info(`Activity updated: ${activityId}`);
-            return updatedActivity;
-
-        } catch (error) {
-            logger.error(`Update activity failed: ${activityId}`, error);
-            throw error;
-        }
-    }
-
-    /**
-     * Bulk update activities
-     */
     async bulkUpdate(activityIds: string[], updates: Partial<Activity>): Promise<void> {
         try {
-            const batch = this.db.batch();
-            const updateData = {
-                ...updates,
-                updatedAt: new Date()
-            };
+            const batch = firestore.batch();
+            const updateData = { ...updates, updatedAt: Timestamp.now() } as any;
 
-            for (const activityId of activityIds) {
-                const docRef = this.collection.doc(activityId);
-                batch.update(docRef, updateData);
+            for (const id of activityIds) {
+                batch.update(this.activityColl.doc(id), updateData);
             }
 
             await batch.commit();
 
-            // Invalidate caches
-            for (const activityId of activityIds) {
-                await this.cacheService.delete(`activity:${activityId}`);
-
-                // Get activity to find section ID
-                const activity = await this.findById(activityId);
-                if (activity) {
-                    await this.cacheService.delete(`section-activities:${activity.sectionId}`);
-                    await this.cacheService.delete(`section-stats:${activity.sectionId}`);
+            for (const id of activityIds) {
+                await this.cacheService.delete(`activity:${id}`);
+                const act = await this.findById(id);
+                if (act) {
+                    await this.cacheService.delete(`section-activities:${act.sectionId}`);
+                    await this.cacheService.delete(`section-stats:${act.sectionId}`);
                 }
             }
 
             logger.info(`Bulk update completed: ${activityIds.length} activities`);
-
-        } catch (error) {
-            logger.error('Bulk update activities failed:', error);
-            throw error;
+        } catch (err) {
+            logger.error('bulkUpdate error', { activityIds, updates, err });
+            throw new AppError('Failed to bulk update activities', 500, undefined, ErrorCode.DATABASE_CONNECTION_ERROR);
         }
     }
 
-    /**
-     * Delete activity
-     */
-    async deleteActivity(activityId: string): Promise<void> {
-        try {
-            // Get activity first to know which caches to invalidate
-            const activity = await this.findById(activityId);
-
-            // Delete document
-            await this.collection.doc(activityId).delete();
-
-            // Remove from cache
-            await this.cacheService.delete(`activity:${activityId}`);
-
-            // Update related caches
-            if (activity) {
-                await this.cacheService.delete(`section-activities:${activity.sectionId}`);
-                await this.cacheService.delete(`section-stats:${activity.sectionId}`);
-            }
-
-            logger.info(`Activity deleted: ${activityId}`);
-
-        } catch (error) {
-            logger.error(`Delete activity failed: ${activityId}`, error);
-            throw error;
-        }
-    }
-
-    /**
-     * Bulk delete activities
-     */
     async bulkDelete(activityIds: string[]): Promise<void> {
         try {
-            const batch = this.db.batch();
+            const batch = firestore.batch();
 
-            for (const activityId of activityIds) {
-                const docRef = this.collection.doc(activityId);
-                batch.delete(docRef);
+            for (const id of activityIds) {
+                batch.delete(this.activityColl.doc(id));
             }
 
             await batch.commit();
 
-            // Invalidate caches
             const sectionIds = new Set<string>();
-
-            for (const activityId of activityIds) {
-                await this.cacheService.delete(`activity:${activityId}`);
-
-                // Get activity to find section ID
-                const activity = await this.findById(activityId);
-                if (activity) {
-                    sectionIds.add(activity.sectionId);
-                }
+            for (const id of activityIds) {
+                await this.cacheService.delete(`activity:${id}`);
+                const act = await this.findById(id);
+                if (act) sectionIds.add(act.sectionId);
             }
 
-            // Invalidate section caches
-            for (const sectionId of sectionIds) {
-                await this.cacheService.delete(`section-activities:${sectionId}`);
-                await this.cacheService.delete(`section-stats:${sectionId}`);
+            for (const secId of sectionIds) {
+                await this.cacheService.delete(`section-activities:${secId}`);
+                await this.cacheService.delete(`section-stats:${secId}`);
             }
 
             logger.info(`Bulk delete completed: ${activityIds.length} activities`);
-
-        } catch (error) {
-            logger.error('Bulk delete activities failed:', error);
-            throw error;
+        } catch (err) {
+            logger.error('bulkDelete error', { activityIds, err });
+            throw new AppError('Failed to bulk delete activities', 500, undefined, ErrorCode.DATABASE_CONNECTION_ERROR);
         }
     }
 
-    /**
-     * Reorder activities
-     */
+    /* ------------------------------------------------------------------ */
+    /*  Reorder & section cleanup                                          */
+    /* ------------------------------------------------------------------ */
+
     async reorderActivities(reorderData: Array<{ id: string; order: number }>): Promise<void> {
         try {
-            const batch = this.db.batch();
-
+            const batch = firestore.batch();
             for (const item of reorderData) {
-                const docRef = this.collection.doc(item.id);
-                batch.update(docRef, {
-                    order: item.order,
-                    updatedAt: new Date()
-                });
+                batch.update(this.activityColl.doc(item.id), { order: item.order, updatedAt: Timestamp.now() } as any);
             }
-
             await batch.commit();
 
-            // Invalidate caches for affected activities
             const sectionIds = new Set<string>();
-
             for (const item of reorderData) {
                 await this.cacheService.delete(`activity:${item.id}`);
-
-                // Get activity to find section ID
-                const activity = await this.findById(item.id);
-                if (activity) {
-                    sectionIds.add(activity.sectionId);
-                }
+                const act = await this.findById(item.id);
+                if (act) sectionIds.add(act.sectionId);
+            }
+            for (const secId of sectionIds) {
+                await this.cacheService.delete(`section-activities:${secId}`);
             }
 
-            // Invalidate section caches
-            for (const sectionId of sectionIds) {
-                await this.cacheService.delete(`section-activities:${sectionId}`);
-            }
-
-            logger.info(`Activities reordered: ${reorderData.length} activities`);
-
-        } catch (error) {
-            logger.error('Reorder activities failed:', error);
-            throw error;
+            logger.info(`Activities reordered: ${reorderData.length} items`);
+        } catch (err) {
+            logger.error('reorderActivities error', { reorderData, err });
+            throw new AppError('Failed to reorder activities', 500, undefined, ErrorCode.DATABASE_CONNECTION_ERROR);
         }
     }
 
-    /**
-     * Delete activities by section ID
-     */
     async deleteBySectionId(sectionId: string): Promise<void> {
         try {
-            const snapshot = await this.collection
-                .where('sectionId', '==', sectionId)
-                .get();
+            const snap = await this.activityColl.where('sectionId', '==', sectionId).get();
+            const batch = firestore.batch();
+            const ids: string[] = [];
 
-            const batch = this.db.batch();
-            const activityIds: string[] = [];
-
-            snapshot.forEach((doc) => {
-                batch.delete(doc.ref);
-                activityIds.push(doc.id);
+            snap.docs.forEach(d => {
+                batch.delete(d.ref);
+                ids.push(d.id);
             });
 
             await batch.commit();
 
-            // Invalidate caches
-            for (const activityId of activityIds) {
-                await this.cacheService.delete(`activity:${activityId}`);
+            for (const id of ids) {
+                await this.cacheService.delete(`activity:${id}`);
             }
             await this.cacheService.delete(`section-activities:${sectionId}`);
 
             logger.info(`Activities deleted for section: ${sectionId}`);
-
-        } catch (error) {
-            logger.error(`Delete activities by section ID failed: ${sectionId}`, error);
-            throw error;
+        } catch (err) {
+            logger.error('deleteBySectionId error', { sectionId, err });
+            throw new AppError('Failed to delete activities by section', 500, undefined, ErrorCode.DATABASE_CONNECTION_ERROR);
         }
     }
 
-    /**
-     * Get activity statistics
-     */
+    /* ------------------------------------------------------------------ */
+    /*  Statistics & helpers                                                */
+    /* ------------------------------------------------------------------ */
+
     async getActivityStatistics(filters: ActivityFilterRequest): Promise<ActivityStatistics> {
         try {
-            const activities = await this.findWithFilters({
-                ...filters,
-                page: 1,
-                limit: 10000 // Get all activities for statistics
-            });
+            const listResp = await this.findWithFilters({ ...filters, page: 1, limit: 10000 });
+            const items = listResp.activities;
 
-            const { activities: activityList } = activities;
-
+            const now = new Date();
             let completedCount = 0;
             let overdueCount = 0;
             let upcomingCount = 0;
@@ -535,14 +339,14 @@ export class ActivityRepository extends FirebaseRepository<Activity> {
                 'in-progress': 0,
                 completed: 0,
                 cancelled: 0,
-                archived: 0
+                archived: 0,
             };
 
             const activitiesByPriority: Record<ActivityPriority, number> = {
                 low: 0,
                 medium: 0,
                 high: 0,
-                urgent: 0
+                urgent: 0,
             };
 
             const activitiesByType: Record<ActivityType, number> = {
@@ -551,54 +355,30 @@ export class ActivityRepository extends FirebaseRepository<Activity> {
                 note: 0,
                 goal: 0,
                 habit: 0,
-                milestone: 0
+                milestone: 0,
             };
 
-            const now = new Date();
+            for (const a of items) {
+                activitiesByStatus[a.status]++;
+                if (a.priority) activitiesByPriority[a.priority]++;
+                if (a.type) activitiesByType[a.type]++;
 
-            for (const activity of activityList) {
-                // Count by status
-                activitiesByStatus[activity.status]++;
-
-                // Count by priority
-                if (activity.priority) {
-                    activitiesByPriority[activity.priority]++;
-                }
-
-                // Count by type
-                if (activity.type) {
-                    activitiesByType[activity.type]++;
-                }
-
-                // Count completed
-                if (activity.status === 'completed') {
+                if (a.status === 'completed') {
                     completedCount++;
-                    if (activity.metadata?.actualDuration) {
-                        totalTimeSpent += activity.metadata.actualDuration;
-                    }
-                    if (activity.metadata?.estimatedDuration && activity.metadata?.actualDuration) {
-                        completionTimes.push(activity.metadata.actualDuration);
-                    }
+                    if (a.metadata?.actualDuration) totalTimeSpent += a.metadata.actualDuration;
+                    if (a.metadata?.actualDuration) completionTimes.push(a.metadata.actualDuration);
                 }
 
-                // Count overdue
-                if (activity.dueDate && activity.dueDate < now &&
-                    (activity.status === 'pending' || activity.status === 'in-progress')) {
-                    overdueCount++;
-                }
+                if (a.dueDate && a.dueDate < now && ['pending', 'in-progress'].includes(a.status)) overdueCount++;
 
-                // Count upcoming (due within next 7 days)
                 const sevenDaysFromNow = new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000);
-                if (activity.dueDate && activity.dueDate > now && activity.dueDate <= sevenDaysFromNow &&
-                    (activity.status === 'pending' || activity.status === 'in-progress')) {
+                if (a.dueDate && a.dueDate > now && a.dueDate <= sevenDaysFromNow && ['pending', 'in-progress'].includes(a.status)) {
                     upcomingCount++;
                 }
             }
 
-            const completionRate = activityList.length > 0 ? (completedCount / activityList.length) * 100 : 0;
-            const averageCompletionTime = completionTimes.length > 0
-                ? completionTimes.reduce((a, b) => a + b, 0) / completionTimes.length
-                : undefined;
+            const completionRate = items.length > 0 ? (completedCount / items.length) * 100 : 0;
+            const averageCompletionTime = completionTimes.length > 0 ? completionTimes.reduce((s, v) => s + v, 0) / completionTimes.length : undefined;
 
             return {
                 completionRate,
@@ -608,95 +388,96 @@ export class ActivityRepository extends FirebaseRepository<Activity> {
                 upcomingCount,
                 activitiesByStatus,
                 activitiesByPriority,
-                activitiesByType
+                activitiesByType,
             };
-
-        } catch (error) {
-            logger.error('Get activity statistics failed:', error);
-            throw error;
+        } catch (err) {
+            logger.error('getActivityStatistics error', { filters, err });
+            throw new AppError('Failed to compute activity statistics', 500, undefined, ErrorCode.DATABASE_CONNECTION_ERROR);
         }
     }
 
-    /**
-     * Get activities due soon
-     */
-    async getDueSoon(userId: string, daysAhead: number = 7): Promise<Activity[]> {
+    async getDueSoon(userId: string, daysAhead = 7): Promise<Activity[]> {
         try {
             const now = new Date();
-            const futureDate = new Date(now.getTime() + daysAhead * 24 * 60 * 60 * 1000);
+            const future = new Date(now.getTime() + daysAhead * 24 * 60 * 60 * 1000);
 
-            const snapshot = await this.collection
+            const snap = await this.activityColl
                 .where('assignee', '==', userId)
                 .where('dueDate', '>=', now)
-                .where('dueDate', '<=', futureDate)
+                .where('dueDate', '<=', future)
                 .where('status', 'in', ['pending', 'in-progress'])
                 .orderBy('dueDate', 'asc')
                 .get();
 
-            const activities: Activity[] = [];
-            snapshot.forEach((doc) => {
-                activities.push(doc.data() as Activity);
-            });
-
-            return activities;
-
-        } catch (error) {
-            logger.error(`Get due soon activities failed for user: ${userId}`, error);
-            throw error;
+            return snap.docs.map(d => ({ id: d.id, ...d.data() } as Activity));
+        } catch (err) {
+            logger.error('getDueSoon error', { userId, daysAhead, err });
+            throw new AppError('Failed to fetch due soon activities', 500, undefined, ErrorCode.DATABASE_CONNECTION_ERROR);
         }
     }
 
-    /**
-     * Get overdue activities
-     */
     async getOverdue(userId: string): Promise<Activity[]> {
         try {
             const now = new Date();
 
-            const snapshot = await this.collection
+            const snap = await this.activityColl
                 .where('assignee', '==', userId)
                 .where('dueDate', '<', now)
                 .where('status', 'in', ['pending', 'in-progress'])
                 .orderBy('dueDate', 'asc')
                 .get();
 
-            const activities: Activity[] = [];
-            snapshot.forEach((doc) => {
-                activities.push(doc.data() as Activity);
-            });
-
-            return activities;
-
-        } catch (error) {
-            logger.error(`Get overdue activities failed for user: ${userId}`, error);
-            throw error;
+            return snap.docs.map(d => ({ id: d.id, ...d.data() } as Activity));
+        } catch (err) {
+            logger.error('getOverdue error', { userId, err });
+            throw new AppError('Failed to fetch overdue activities', 500, undefined, ErrorCode.DATABASE_CONNECTION_ERROR);
         }
     }
 
-    /**
-     * Search activities
-     */
-    async searchActivities(userId: string, query: string, limit: number = 20): Promise<Activity[]> {
+    async searchActivities(userId: string, q: string, limit = 20): Promise<Activity[]> {
         try {
-            // This is a simplified implementation
-            // In production, consider using Algolia or Elasticsearch for full-text search
-            const snapshot = await this.collection
+            const snap = await this.activityColl
                 .where('createdBy', '==', userId)
-                .where('title', '>=', query)
-                .where('title', '<=', query + '\uf8ff')
+                .where('title', '>=', q)
+                .where('title', '<=', q + '\uf8ff')
                 .limit(limit)
                 .get();
 
-            const activities: Activity[] = [];
-            snapshot.forEach((doc) => {
-                activities.push(doc.data() as Activity);
-            });
-
-            return activities;
-
-        } catch (error) {
-            logger.error(`Search activities failed for user: ${userId}, query: ${query}`, error);
-            throw error;
+            return snap.docs.map(d => ({ id: d.id, ...d.data() } as Activity));
+        } catch (err) {
+            logger.error('searchActivities error', { userId, q, err });
+            throw new AppError('Failed to search activities', 500, undefined, ErrorCode.DATABASE_CONNECTION_ERROR);
         }
     }
+
+
+    async saveTimeEntry(entry: TimeEntry): Promise<void> {
+        await firestore.collection('timeEntries').doc(entry.id).set({ ...entry, createdAt: Timestamp.now(), updatedAt: Timestamp.now() });
+    }
+
+    async getActiveTimeEntry(userId: string): Promise<TimeEntry | null> {
+        const snap = await firestore.collection('timeEntries')
+            .where('userId', '==', userId)
+            .where('endTime', '==', null)
+            .limit(1)
+            .get();
+        if (snap.empty) return null;
+        const doc = snap.docs[0];
+        return { id: doc.id, ...doc.data() } as TimeEntry;
+    }
+
+    async getTimeEntry(timeEntryId: string): Promise<TimeEntry | null> {
+        const doc = await firestore.collection('timeEntries').doc(timeEntryId).get();
+        if (!doc.exists) return null;
+        return { id: doc.id, ...doc.data() } as TimeEntry;
+    }
+
+    async getUserTimeEntries(userId: string): Promise<TimeEntry[]> {
+        const snap = await firestore.collection('timeEntries')
+            .where('userId', '==', userId)
+            .orderBy('startTime', 'desc')
+            .get();
+        return snap.docs.map(d => ({ id: d.id, ...d.data() } as TimeEntry));
+    }
+
 }
