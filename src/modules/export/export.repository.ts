@@ -1,360 +1,270 @@
-import { Injectable, Logger } from '@nestjs/common';
-import { FirebaseService } from '../../shared/services/firebase.service';
-import { CacheService } from '../../shared/services/cache.service';
-import { ExportResult, ExportStatus } from './export.types';
+// src/modules/export/export.repository.ts
+import { injectable } from 'tsyringe';
 import { Timestamp, FieldValue } from 'firebase-admin/firestore';
+import { AppError, ErrorCode } from '../../shared/utils/errors';
 import { logger } from '../../shared/utils/logger';
+import firebaseConnection from '../../infrastructure/database/firebase';
+import { CacheService } from '../../shared/services/cache.service';
+import {
+    ExportResult,
+    ExportStatus,
+    ExportTemplate,
+    ExportStats,
+} from './export.types';
 
-@Injectable()
+const firestore = firebaseConnection.getDatabase();
+
+@injectable()
 export class ExportRepository {
-    private readonly logger = new Logger(ExportRepository.name);
-    private readonly db;
-    private readonly cachePrefix = 'export:';
+    private readonly exportColl = firestore.collection('exports');
+    private readonly templateColl = firestore.collection('exportTemplates');
 
-    constructor(
-        private readonly firebaseService: FirebaseService,
-        private readonly cacheService: CacheService
-    ) {
-        this.db = this.firebaseService.getFirestore();
-    }
+    constructor(private readonly cacheService: CacheService) {}
 
-    /**
-     * Save export record
-     */
-    async saveExport(exportResult: ExportResult): Promise<void> {
+    /* ------------------------------------------------------------------ */
+    /*  Core CRUD                                                         */
+    /* ------------------------------------------------------------------ */
+
+    async create(exportResult: ExportResult): Promise<ExportResult> {
         try {
-            const exportRef = this.db.collection('exports').doc(exportResult.id);
-            await exportRef.set({
-                ...exportResult,
-                createdAt: FieldValue.serverTimestamp(),
-                updatedAt: FieldValue.serverTimestamp(),
-            });
+            await this.exportColl
+                .doc(exportResult.id)
+                .set({ ...exportResult, createdAt: Timestamp.now(), updatedAt: Timestamp.now() });
 
-            // Cache for quick access
-            const cacheKey = `${this.cachePrefix}export:${exportResult.id}`;
-            await this.cacheService.set(cacheKey, exportResult, 3600); // 1 hour
-
-            logger.info(`Export saved: ${exportResult.id}`);
-        } catch (error) {
-            logger.error('Error saving export:', error);
-            throw error;
+            await this.cacheService.set(`export:${exportResult.id}`, exportResult, { ttl: 3600 });
+            logger.info(`Export created: ${exportResult.id}`);
+            return exportResult;
+        } catch (err) {
+            logger.error('create export error', err);
+            throw new AppError('Failed to create export', 500, undefined, ErrorCode.DATABASE_CONNECTION_ERROR);
         }
     }
 
-    /**
-     * Get export by ID
-     */
-    async getExport(exportId: string): Promise<ExportResult | null> {
+    async findById(exportId: string): Promise<ExportResult | null> {
         try {
-            // Check cache first
-            const cacheKey = `${this.cachePrefix}export:${exportId}`;
-            const cached = await this.cacheService.get<ExportResult>(cacheKey);
+            const cached = await this.cacheService.get(`export:${exportId}`) as ExportResult;
             if (cached) return cached;
 
-            // Fetch from database
-            const exportRef = this.db.collection('exports').doc(exportId);
-            const doc = await exportRef.get();
+            const snap = await this.exportColl.doc(exportId).get();
+            if (!snap.exists) return null;
 
-            if (!doc.exists) return null;
-
-            const exportResult = {
-                id: doc.id,
-                ...doc.data(),
-                createdAt: doc.data().createdAt?.toDate() || new Date(),
-                updatedAt: doc.data().updatedAt?.toDate() || new Date(),
-                completedAt: doc.data().completedAt?.toDate(),
-                expiresAt: doc.data().expiresAt?.toDate()
-            } as ExportResult;
-
-            // Cache for future requests
-            await this.cacheService.set(cacheKey, exportResult, 3600);
-
-            return exportResult;
-        } catch (error) {
-            logger.error('Error retrieving export:', error);
-            throw error;
+            const data = this.mapExportDoc(snap);
+            await this.cacheService.set(`export:${exportId}`, data, { ttl: 3600 });
+            return data;
+        } catch (err) {
+            logger.error('findById error', { exportId, err });
+            throw new AppError('Failed to fetch export', 500, undefined, ErrorCode.DATABASE_CONNECTION_ERROR);
         }
     }
 
-    /**
-     * Update export
-     */
-    async updateExport(exportId: string, updates: Partial<ExportResult>): Promise<void> {
+    async update(exportId: string, updates: Partial<ExportResult>): Promise<ExportResult> {
         try {
-            const exportRef = this.db.collection('exports').doc(exportId);
-            await exportRef.update({
-                ...updates,
-                updatedAt: FieldValue.serverTimestamp(),
-            });
+            updates.updatedAt = new Date();
+            await this.exportColl.doc(exportId).update(updates);
+            await this.cacheService.delete(`export:${exportId}`);
 
-            // Invalidate cache
-            const cacheKey = `${this.cachePrefix}export:${exportId}`;
-            await this.cacheService.delete(cacheKey);
-
+            const updated = (await this.findById(exportId))!;
             logger.info(`Export updated: ${exportId}`);
-        } catch (error) {
-            logger.error('Error updating export:', error);
-            throw error;
+            return updated;
+        } catch (err) {
+            logger.error('update error', { exportId, updates, err });
+            throw new AppError('Failed to update export', 500, undefined, ErrorCode.DATABASE_CONNECTION_ERROR);
         }
     }
 
-    /**
-     * Delete export
-     */
-    async deleteExport(exportId: string): Promise<void> {
+    async delete(exportId: string): Promise<void> {
         try {
-            const exportRef = this.db.collection('exports').doc(exportId);
-            await exportRef.delete();
-
-            // Remove from cache
-            const cacheKey = `${this.cachePrefix}export:${exportId}`;
-            await this.cacheService.delete(cacheKey);
-
+            await this.exportColl.doc(exportId).delete();
+            await this.cacheService.delete(`export:${exportId}`);
             logger.info(`Export deleted: ${exportId}`);
-        } catch (error) {
-            logger.error('Error deleting export:', error);
-            throw error;
+        } catch (err) {
+            logger.error('delete error', { exportId, err });
+            throw new AppError('Failed to delete export', 500, undefined, ErrorCode.DATABASE_CONNECTION_ERROR);
         }
     }
 
-    /**
-     * Get user exports
-     */
-    async getUserExports(
+    /* ------------------------------------------------------------------ */
+    /*  Queries                                                           */
+    /* ------------------------------------------------------------------ */
+
+    async findByUser(
         userId: string,
-        limit: number = 20,
-        offset: number = 0,
+        limit = 20,
+        offset = 0,
         status?: ExportStatus
     ): Promise<ExportResult[]> {
         try {
-            let query = this.db.collection('exports')
+            let q: FirebaseFirestore.Query = this.exportColl
                 .where('userId', '==', userId)
                 .orderBy('createdAt', 'desc')
                 .limit(limit)
                 .offset(offset);
 
-            if (status) {
-                query = query.where('status', '==', status);
-            }
+            if (status) q = q.where('status', '==', status);
 
-            const snapshot = await query.get();
-
-            return snapshot.docs.map(doc => ({
-                id: doc.id,
-                ...doc.data(),
-                createdAt: doc.data().createdAt?.toDate() || new Date(),
-                updatedAt: doc.data().updatedAt?.toDate() || new Date(),
-                completedAt: doc.data().completedAt?.toDate(),
-                expiresAt: doc.data().expiresAt?.toDate()
-            } as ExportResult));
-        } catch (error) {
-            logger.error('Error retrieving user exports:', error);
-            throw error;
+            const snap = await q.get();
+            return snap.docs.map(d => this.mapExportDoc(d));
+        } catch (err) {
+            logger.error('findByUser error', { userId, limit, offset, status, err });
+            throw new AppError('Failed to fetch user exports', 500, undefined, ErrorCode.DATABASE_CONNECTION_ERROR);
         }
     }
 
-    /**
-     * Get expired exports
-     */
-    async getExpiredExports(): Promise<ExportResult[]> {
+    async findExpired(): Promise<ExportResult[]> {
         try {
             const now = new Date();
-            const snapshot = await this.db.collection('exports')
+            const snap = await this.exportColl
                 .where('expiresAt', '<', now)
                 .where('status', '==', 'completed')
                 .get();
 
-            return snapshot.docs.map(doc => ({
-                id: doc.id,
-                ...doc.data(),
-                createdAt: doc.data().createdAt?.toDate() || new Date(),
-                updatedAt: doc.data().updatedAt?.toDate() || new Date(),
-                completedAt: doc.data().completedAt?.toDate(),
-                expiresAt: doc.data().expiresAt?.toDate()
-            } as ExportResult));
-        } catch (error) {
-            logger.error('Error retrieving expired exports:', error);
-            throw error;
+            return snap.docs.map(d => this.mapExportDoc(d));
+        } catch (err) {
+            logger.error('findExpired error', err);
+            throw new AppError('Failed to fetch expired exports', 500, undefined, ErrorCode.DATABASE_CONNECTION_ERROR);
         }
     }
 
-    /**
-     * Get user export usage for current month
-     */
-    async getUserExportUsage(userId: string, referenceDate: Date): Promise<{
-        count: number;
-        resetsAt: Date;
-    }> {
+    async countMonthlyUsage(userId: string, referenceDate: Date): Promise<{ count: number; resetsAt: Date }> {
         try {
-            const startOfMonth = new Date(referenceDate.getFullYear(), referenceDate.getMonth(), 1);
-            const endOfMonth = new Date(referenceDate.getFullYear(), referenceDate.getMonth() + 1, 0, 23, 59, 59);
+            const start = new Date(referenceDate.getFullYear(), referenceDate.getMonth(), 1);
+            const end = new Date(referenceDate.getFullYear(), referenceDate.getMonth() + 1, 0, 23, 59, 59);
 
-            const snapshot = await this.db.collection('exports')
+            const snap = await this.exportColl
                 .where('userId', '==', userId)
-                .where('createdAt', '>=', startOfMonth)
-                .where('createdAt', '<=', endOfMonth)
+                .where('createdAt', '>=', start)
+                .where('createdAt', '<=', end)
                 .where('status', 'in', ['completed', 'processing'])
+                .count()
                 .get();
 
-            return {
-                count: snapshot.size,
-                resetsAt: endOfMonth
-            };
-        } catch (error) {
-            logger.error('Error retrieving user export usage:', error);
-            throw error;
+            return { count: snap.data().count, resetsAt: end };
+        } catch (err) {
+            logger.error('countMonthlyUsage error', { userId, referenceDate, err });
+            throw new AppError('Failed to count usage', 500, undefined, ErrorCode.DATABASE_CONNECTION_ERROR);
         }
     }
 
-    /**
-     * Get export templates
-     */
-    async getExportTemplates(type?: string): Promise<any[]> {
+    /* ------------------------------------------------------------------ */
+    /*  Templates                                                         */
+    /* ------------------------------------------------------------------ */
+
+    async listTemplates(type?: string): Promise<ExportTemplate[]> {
         try {
-            let query = this.db.collection('exportTemplates')
+            let q: FirebaseFirestore.Query = this.templateColl
                 .where('isPublic', '==', true)
                 .orderBy('name');
 
-            if (type) {
-                query = query.where('type', '==', type);
-            }
+            if (type) q = q.where('type', '==', type);
 
-            const snapshot = await query.get();
-
-            return snapshot.docs.map(doc => ({
-                id: doc.id,
-                ...doc.data(),
-                createdAt: doc.data().createdAt?.toDate(),
-                updatedAt: doc.data().updatedAt?.toDate()
-            }));
-        } catch (error) {
-            logger.error('Error retrieving export templates:', error);
-            throw error;
+            const snap = await q.get();
+            return snap.docs.map(d => ({ id: d.id, ...d.data() } as ExportTemplate));
+        } catch (err) {
+            logger.error('listTemplates error', { type, err });
+            throw new AppError('Failed to fetch templates', 500, undefined, ErrorCode.DATABASE_CONNECTION_ERROR);
         }
     }
 
-    /**
-     * Create export template
-     */
-    async createExportTemplate(templateData: any): Promise<any> {
+    async createTemplate(data: Omit<ExportTemplate, 'id' | 'createdAt' | 'updatedAt'>): Promise<ExportTemplate> {
         try {
-            const templateRef = this.db.collection('exportTemplates').doc();
-            const template = {
-                ...templateData,
-                id: templateRef.id,
-                createdAt: FieldValue.serverTimestamp(),
-                updatedAt: FieldValue.serverTimestamp(),
+            const ref = this.templateColl.doc();
+            const template: ExportTemplate = {
+                id: ref.id,
+                ...data,
+                createdAt: new Date(),
+                updatedAt: new Date(),
             };
 
-            await templateRef.set(template);
-
-            logger.info(`Export template created: ${templateRef.id}`);
-            return { id: templateRef.id, ...template };
-        } catch (error) {
-            logger.error('Error creating export template:', error);
-            throw error;
+            await ref.set(template);
+            logger.info(`Template created: ${ref.id}`);
+            return template;
+        } catch (err) {
+            logger.error('createTemplate error', data, err);
+            throw new AppError('Failed to create template', 500, undefined, ErrorCode.DATABASE_CONNECTION_ERROR);
         }
     }
 
-    /**
-     * Get export file from storage
-     */
-    async getExportFile(fileUrl: string): Promise<Buffer> {
+    /* ------------------------------------------------------------------ */
+    /*  Statistics & Cleanup                                              */
+    /* ------------------------------------------------------------------ */
+
+    async getStats(startDate: Date, endDate: Date): Promise<ExportStats> {
         try {
-            return await this.firebaseService.getStorageFile(fileUrl);
-        } catch (error) {
-            logger.error('Error retrieving export file:', error);
-            throw error;
-        }
-    }
-
-    /**
-     * Cleanup old exports
-     */
-    async cleanupOldExports(daysToKeep: number = 30): Promise<number> {
-        try {
-            const cutoffDate = new Date(Date.now() - daysToKeep * 24 * 60 * 60 * 1000);
-            let cleanedCount = 0;
-
-            // Get old exports
-            const snapshot = await this.db.collection('exports')
-                .where('createdAt', '<', cutoffDate)
-                .where('status', 'in', ['completed', 'failed', 'expired'])
-                .limit(500)
-                .get();
-
-            const batch = this.db.batch();
-
-            snapshot.docs.forEach(doc => {
-                batch.delete(doc.ref);
-                cleanedCount++;
-            });
-
-            await batch.commit();
-
-            logger.info(`Cleaned up ${cleanedCount} old export records`);
-            return cleanedCount;
-        } catch (error) {
-            logger.error('Error cleaning up old exports:', error);
-            throw error;
-        }
-    }
-
-    /**
-     * Get export statistics
-     */
-    async getExportStats(startDate: Date, endDate: Date): Promise<any> {
-        try {
-            const snapshot = await this.db.collection('exports')
+            const snap = await this.exportColl
                 .where('createdAt', '>=', startDate)
                 .where('createdAt', '<=', endDate)
                 .get();
 
-            const stats = {
+            const stats: ExportStats = {
                 total: 0,
                 byStatus: {},
                 byFormat: {},
                 byType: {},
                 averageProcessingTime: 0,
-                successRate: 0
+                successRate: 0,
             };
 
-            let totalProcessingTime = 0;
-            let completedCount = 0;
+            let totalTime = 0;
+            let completed = 0;
 
-            snapshot.docs.forEach(doc => {
-                const data = doc.data();
+            snap.docs.forEach(d => {
+                const data = d.data();
                 stats.total++;
 
-                // By status
                 stats.byStatus[data.status] = (stats.byStatus[data.status] || 0) + 1;
-
-                // By format
                 stats.byFormat[data.format] = (stats.byFormat[data.format] || 0) + 1;
-
-                // By type
                 stats.byType[data.type] = (stats.byType[data.type] || 0) + 1;
 
-                // Processing time
                 if (data.metadata?.processingTime && data.status === 'completed') {
-                    totalProcessingTime += data.metadata.processingTime;
-                    completedCount++;
+                    totalTime += data.metadata.processingTime;
+                    completed++;
                 }
             });
 
-            // Calculate averages
-            if (completedCount > 0) {
-                stats.averageProcessingTime = Math.round(totalProcessingTime / completedCount);
-            }
-
-            if (stats.total > 0) {
-                stats.successRate = Math.round((stats.byStatus['completed'] || 0) / stats.total * 100);
-            }
+            if (completed) stats.averageProcessingTime = Math.round(totalTime / completed);
+            if (stats.total) stats.successRate = Math.round((stats.byStatus['completed'] || 0) / stats.total * 100);
 
             return stats;
-        } catch (error) {
-            logger.error('Error retrieving export statistics:', error);
-            throw error;
+        } catch (err) {
+            logger.error('getStats error', { startDate, endDate, err });
+            throw new AppError('Failed to compute stats', 500, undefined, ErrorCode.DATABASE_CONNECTION_ERROR);
         }
+    }
+
+    async cleanup(olderThanDays = 30): Promise<number> {
+        try {
+            const cutoff = new Date(Date.now() - olderThanDays * 24 * 60 * 60 * 1000);
+            const snap = await this.exportColl
+                .where('createdAt', '<', cutoff)
+                .where('status', 'in', ['completed', 'failed', 'expired'])
+                .limit(500)
+                .get();
+
+            const batch = firestore.batch();
+            snap.docs.forEach(d => batch.delete(d.ref));
+            await batch.commit();
+
+            logger.info(`Cleaned up ${snap.size} old exports`);
+            return snap.size;
+        } catch (err) {
+            logger.error('cleanup error', { olderThanDays, err });
+            throw new AppError('Failed to cleanup exports', 500, undefined, ErrorCode.DATABASE_CONNECTION_ERROR);
+        }
+    }
+
+    /* ------------------------------------------------------------------ */
+    /*  Helpers                                                           */
+    /* ------------------------------------------------------------------ */
+
+    private mapExportDoc(snap: FirebaseFirestore.DocumentSnapshot): ExportResult {
+        const data = snap.data()!;
+        return {
+            id: snap.id,
+            ...data,
+            createdAt: data.createdAt?.toDate() || new Date(),
+            updatedAt: data.updatedAt?.toDate() || new Date(),
+            completedAt: data.completedAt?.toDate(),
+            expiresAt: data.expiresAt?.toDate(),
+        } as ExportResult;
     }
 }

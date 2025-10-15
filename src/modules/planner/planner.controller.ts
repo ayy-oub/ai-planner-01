@@ -113,9 +113,9 @@ export class PlannerController {
     exportPlanner = asyncHandler(async (req: AuthRequest, res: Response, next: NextFunction) => {
         try {
             const result = await this.plannerService.exportPlanner(req.params.id, req.user!.uid, req.body);
-            res.setHeader('Content-Type', result.contentType);
+            res.setHeader('Content-Type', result.format);
             res.setHeader('Content-Disposition', `attachment; filename="${result.filename}"`);
-            res.send(result.data);
+            res.send(result.buffer);
         } catch (err) {
             logger.error('Export planner controller error:', err);
             next(err);

@@ -1,15 +1,21 @@
-import { Timestamp } from 'firebase-admin/firestore';
+// src/modules/ai/ai.types.ts
+// NOTE: use `Date` for timestamps in domain-level types (repos convert Firestore Timestamps <-> Date).
+// Be aware: your planner types also declare an `AISuggestion` interface. Consider centralizing or renaming
+// to avoid import collisions.
+
+export type AISuggestionType = 'time_estimate' | 'task' | 'priority' | 'category' | 'schedule' | 'breakdown' | 'optimize';
+
 
 export interface AISuggestion {
     id: string;
-    type: 'task' | 'schedule' | 'priority' | 'category';
+    type: AISuggestionType;
     suggestion: string;
     confidence: number;
     reasoning: string;
     metadata?: Record<string, any>;
     accepted?: boolean;
     rejected?: boolean;
-    createdAt: Timestamp;
+    createdAt: Date;
 }
 
 export interface AIInsight {
@@ -32,8 +38,8 @@ export interface AIInsight {
         expectedImpact: string;
         estimatedTime?: number;
     }>;
-    generatedAt: Timestamp;
-    expiresAt: Timestamp;
+    generatedAt: Date;
+    expiresAt: Date;
 }
 
 export interface AIScheduleOptimization {
@@ -60,15 +66,25 @@ export interface AIScheduleOptimization {
         type: 'time' | 'dependency' | 'priority' | 'resource';
         description: string;
     }>;
-    createdAt: Timestamp;
+    createdAt: Date;
 }
+
+export type AIRequestKind =
+    | 'suggestion'
+    | 'optimization'
+    | 'analysis'
+    | 'insights'
+    | 'natural-language'
+    | 'chat'
+    | 'generate-description'
+    | 'predict-duration';
 
 export interface AIRequest {
     userId: string;
     plannerId?: string;
     sectionId?: string;
     activityIds?: string[];
-    type: 'suggestion' | 'optimization' | 'analysis' | 'insights';
+    type: AIRequestKind;
     context: {
         goal?: string;
         constraints?: string[];
@@ -80,6 +96,15 @@ export interface AIRequest {
         historicalData?: boolean;
     };
     metadata?: Record<string, any>;
+}
+
+export interface AIRequestLog extends AIRequest {
+    requestId: string;
+    timestamp: Date;
+    requestData?: any;
+    responseData?: any;
+    metadata?: Record<string, any>;
+    requestType: AIRequestKind;
 }
 
 export interface AIResponse<T = any> {
@@ -96,6 +121,23 @@ export interface AIResponse<T = any> {
         modelVersion: string;
         confidence?: number;
     };
+}
+
+export interface AIPlannerSuggestion {
+    type: 'optimize_schedule' | 'suggest_tasks' | 'categorize' | 'prioritize';
+    suggestions: AISuggestionDetail[];
+    confidence: number;
+    reasoning: string;
+}
+
+export interface AISuggestionDetail {
+    id: string;
+    title: string;
+    description: string;
+    action: 'add' | 'modify' | 'delete' | 'reorder';
+    targetId?: string;
+    targetType: 'section' | 'activity';
+    metadata?: any;
 }
 
 export interface AITaskSuggestion extends AISuggestion {
@@ -121,7 +163,7 @@ export interface AIAnalysisResult {
     metrics: {
         completionRate: number;
         averageTaskDuration: number;
-        peakProductivityHours: number[];
+        peakProductivityHours: number[]; // e.g. [9, 14, 20]
         commonDelays: Array<{
             reason: string;
             frequency: number;
@@ -143,7 +185,7 @@ export interface AIAnalysisResult {
         expectedOutcome: string;
         difficulty: 'easy' | 'medium' | 'hard';
     }>;
-    generatedAt: Timestamp;
+    generatedAt: Date;
 }
 
 export interface AINaturalLanguageQuery {
@@ -188,7 +230,7 @@ export interface AIRequestLimit {
     userId: string;
     requestType: string;
     count: number;
-    windowStart: Timestamp;
+    windowStart: Date;
     windowDuration: number; // minutes
     maxRequests: number;
 }

@@ -940,6 +940,47 @@ export class EmailService {
     });
   }
 
+  /**
+ * Send “Your export is ready” email
+ */
+  async sendExportComplete(
+    to: string,
+    data: {
+      name?: string;
+      exportId: string;
+      format: string;
+      downloadUrl: string;
+      expiresAt: Date;
+      itemsExported: number;
+    }
+  ): Promise<EmailResult> {
+    // register template on first use
+    if (!this.templateCache.has('export-complete')) {
+      this.registerTemplate('export-complete', {
+        name: 'export-complete',
+        subject: 'Your AI Planner export is ready',
+        html: `
+        <div style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto;">
+          <h1>Export ready</h1>
+          <p>Hi {{name}},</p>
+          <p>Your <strong>{{format}}</strong> export ({{itemsExported}} items) is ready for download.</p>
+          <div style="text-align:center;margin:30px 0">
+            <a href="{{downloadUrl}}" style="background:#007bff;color:white;padding:12px 24px;text-decoration:none;border-radius:4px;">Download</a>
+          </div>
+          <p><small>Link expires on {{expiresAt}}</small></p>
+        </div>`,
+        text: `Hi {{name}}, your {{format}} export ({{itemsExported}} items) is ready: {{downloadUrl}} (expires {{expiresAt}})`,
+      });
+    }
+
+    return this.sendTemplate('export-complete', to, {
+      name: data.name || 'there',
+      format: data.format,
+      downloadUrl: data.downloadUrl,
+      expiresAt: new Date(data.expiresAt).toLocaleString(),
+      itemsExported: data.itemsExported,
+    });
+  }
   /* ------------------------------------------------------------------ */
   /*  Admin-only templates (centralised inside EmailService)             */
   /* ------------------------------------------------------------------ */
@@ -968,7 +1009,7 @@ export class EmailService {
   /**
    * Send data export started email
    */
-  async sendDataExportStartedEmail(to: string,  exportUrl: string, name?: string): Promise<EmailResult> {
+  async sendDataExportStartedEmail(to: string, exportUrl: string, name?: string): Promise<EmailResult> {
     // First, register a template (built-in or dynamically)
     if (!this.templateCache.has('data-export-started')) {
       this.registerTemplate('data-export-started', {

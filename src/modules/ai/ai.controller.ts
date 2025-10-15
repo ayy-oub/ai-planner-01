@@ -1,353 +1,186 @@
-import {
-    Controller,
-    Post,
-    Get,
-    Body,
-    Query,
-    Param,
-    UseGuards,
-    ValidationPipe,
-    UsePipes,
-    HttpCode,
-    HttpStatus,
-    ParseIntPipe,
-    DefaultValuePipe,
-} from '@nestjs/common';
-import {
-    ApiTags,
-    ApiOperation,
-    ApiResponse,
-    ApiBearerAuth,
-    ApiQuery,
-    ApiParam,
-    ApiBody,
-    ApiHeader,
-} from '@nestjs/swagger';
+import { Request, Response, NextFunction } from 'express';
+import { injectable, inject } from 'tsyringe';
 import { AIService } from './ai.service';
-import { AuthGuard } from '../../shared/middleware/auth.middleware';
-import { CurrentUser } from '../../shared/decorators/current-user.decorator';
-import { AIRequestDto } from './dto/ai-request.dto';
-import { AINaturalLanguageQueryDto } from './dto/ai-natural-language.dto';
-import { AISuggestionResponseDto, AIInsightResponseDto, AIAnalysisResponseDto, AIScheduleOptimizationResponseDto, AINaturalLanguageResponseDto } from './dto/ai-response.dto';
-import { AIRequest, AINaturalLanguageQuery } from './ai.types';
+import { asyncHandler } from '../../shared/utils/async-handler';
+import { ApiResponse } from '../../shared/utils/api-response';
+import { logger } from '../../shared/utils/logger';
+import { AuthRequest } from '../../modules/auth/auth.types';
 
-@ApiTags('AI')
-@ApiBearerAuth()
-@Controller('ai')
-@UseGuards(AuthGuard)
+/**
+ * @swagger
+ * tags:
+ *   name: AI
+ *   description: AI-powered planning assistance
+ */
+@injectable()
 export class AIController {
-    constructor(private readonly aiService: AIService) { }
+    constructor(
+        @inject(AIService) private readonly aiService: AIService
+    ) { }
 
     /**
-     * Generate AI-powered task suggestions
+     * @swagger
+     * /ai/chat:
+     *   post:
+     *     summary: Interact with AI assistant (chat-based)
      */
-    @Post('suggest-tasks')
-    @HttpCode(HttpStatus.OK)
-    @ApiOperation({
-        summary: 'Generate AI task suggestions',
-        description: 'Get AI-powered suggestions for tasks based on your planning patterns and context',
-    })
-    @ApiResponse({
-        status: HttpStatus.OK,
-        description: 'Task suggestions generated successfully',
-        type: AISuggestionResponseDto,
-    })
-    @ApiResponse({
-        status: HttpStatus.BAD_REQUEST,
-        description: 'Invalid request data',
-    })
-    @ApiResponse({
-        status: HttpStatus.TOO_MANY_REQUESTS,
-        description: 'Rate limit exceeded',
-    })
-    @ApiHeader({
-        name: 'x-api-key',
-        description: 'API key for rate limiting',
-        required: false,
-    })
-    @UsePipes(new ValidationPipe({ transform: true, whitelist: true }))
-    async suggestTasks(
-        @Body() requestDto: AIRequestDto,
-        @CurrentUser() user: any
-    ): Promise<AISuggestionResponseDto> {
-        const request: AIRequest = {
-            ...requestDto,
-            userId: user.uid,
-            type: 'suggestion',
-        };
-
-        const result = await this.aiService.suggestTasks(request);
-        return {
-            success: result.success,
-            data: result.data,
-            metadata: result.metadata,
-        };
-    }
+    chat = asyncHandler(async (req: AuthRequest, res: Response, next: NextFunction) => {
+        try {
+            const result = await this.aiService.chat({
+                message: req.body.message,
+                context: req.body.context,
+                userId: req.user!.uid,
+            });
+            res.json(new ApiResponse(req).success(result, 'AI message processed successfully'));
+        } catch (err) {
+            logger.error('AI chat error:', err);
+            next(err);
+        }
+    });
 
     /**
-     * Optimize schedule using AI
-     */
-    @Post('optimize-schedule')
-    @HttpCode(HttpStatus.OK)
-    @ApiOperation({
-        summary: 'Optimize schedule with AI',
-        description: 'Get an AI-optimized version of your schedule based on priorities, constraints, and historical patterns',
-    })
-    @ApiResponse({
-        status: HttpStatus.OK,
-        description: 'Schedule optimized successfully',
-        type: AIScheduleOptimizationResponseDto,
-    })
-    @ApiResponse({
-        status: HttpStatus.BAD_REQUEST,
-        description: 'Invalid request data',
-    })
-    @ApiResponse({
-        status: HttpStatus.TOO_MANY_REQUESTS,
-        description: 'Rate limit exceeded',
-    })
-    @UsePipes(new ValidationPipe({ transform: true, whitelist: true }))
-    async optimizeSchedule(
-        @Body() requestDto: AIRequestDto,
-        @CurrentUser() user: any
-    ): Promise<AIScheduleOptimizationResponseDto> {
-        const request: AIRequest = {
-            ...requestDto,
-            userId: user.uid,
-            type: 'optimization',
-        };
-
-        const result = await this.aiService.optimizeSchedule(request);
-        return {
-            success: result.success,
-            data: result.data,
-            metadata: result.metadata,
-        };
-    }
-
-    /**
-     * Analyze productivity patterns
-     */
-    @Post('analyze-productivity')
-    @HttpCode(HttpStatus.OK)
-    @ApiOperation({
-        summary: 'Analyze productivity patterns',
-        description: 'Get detailed analysis of your productivity patterns, efficiency metrics, and improvement recommendations',
-    })
-    @ApiResponse({
-        status: HttpStatus.OK,
-        description: 'Productivity analysis completed successfully',
-        type: AIAnalysisResponseDto,
-    })
-    @ApiResponse({
-        status: HttpStatus.BAD_REQUEST,
-        description: 'Invalid request data',
-    })
-    @ApiResponse({
-        status: HttpStatus.TOO_MANY_REQUESTS,
-        description: 'Rate limit exceeded',
-    })
-    @UsePipes(new ValidationPipe({ transform: true, whitelist: true }))
-    async analyzeProductivity(
-        @Body() requestDto: AIRequestDto,
-        @CurrentUser() user: any
-    ): Promise<AIAnalysisResponseDto> {
-        const request: AIRequest = {
-            ...requestDto,
-            userId: user.uid,
-            type: 'analysis',
-        };
-
-        const result = await this.aiService.analyzeProductivity(request);
-        return {
-            success: result.success,
-            data: result.data,
-            metadata: result.metadata,
-        };
-    }
-
-    /**
-     * Get AI insights
-     */
-    @Get('insights')
-    @HttpCode(HttpStatus.OK)
-    @ApiOperation({
-        summary: 'Get AI insights',
-        description: 'Retrieve personalized AI insights about your planning and productivity patterns',
-    })
-    @ApiResponse({
-        status: HttpStatus.OK,
-        description: 'Insights retrieved successfully',
-        type: AIInsightResponseDto,
-    })
-    @ApiResponse({
-        status: HttpStatus.TOO_MANY_REQUESTS,
-        description: 'Rate limit exceeded',
-    })
-    @ApiQuery({
-        name: 'type',
-        description: 'Type of insights to retrieve',
-        required: false,
-        enum: ['productivity', 'efficiency', 'patterns', 'recommendations'],
-    })
-    async getInsights(
-        @Query('type') type?: string,
-        @CurrentUser() user: any
-    ): Promise<AIInsightResponseDto> {
-        const result = await this.aiService.getInsights(user.uid, type);
-        return {
-            success: result.success,
-            data: result.data,
-            metadata: result.metadata,
-        };
-    }
-
-    /**
-     * Process natural language queries
-     */
-    @Post('natural-language')
-    @HttpCode(HttpStatus.OK)
-    @ApiOperation({
-        summary: 'Process natural language queries',
-        description: 'Process natural language queries to perform actions, get information, or receive recommendations',
-    })
-    @ApiResponse({
-        status: HttpStatus.OK,
-        description: 'Query processed successfully',
-        type: AINaturalLanguageResponseDto,
-    })
-    @ApiResponse({
-        status: HttpStatus.BAD_REQUEST,
-        description: 'Invalid request data',
-    })
-    @ApiResponse({
-        status: HttpStatus.TOO_MANY_REQUESTS,
-        description: 'Rate limit exceeded',
-    })
-    @UsePipes(new ValidationPipe({ transform: true, whitelist: true }))
-    async processNaturalLanguage(
-        @Body() queryDto: AINaturalLanguageQueryDto,
-        @CurrentUser() user: any
-    ): Promise<AINaturalLanguageResponseDto> {
-        const query: AINaturalLanguageQuery = {
-            ...queryDto,
-            context: {
-                ...queryDto.context,
-                userId: user.uid,
-            },
-        };
-
-        const result = await this.aiService.processNaturalLanguage(query);
-        return {
-            success: result.success,
-            data: result.data,
-            metadata: result.metadata,
-        };
-    }
-
-    /**
-     * Get AI request history
-     */
-    @Get('history')
-    @HttpCode(HttpStatus.OK)
-    @ApiOperation({
-        summary: 'Get AI request history',
-        description: 'Retrieve your history of AI requests and interactions',
-    })
-    @ApiResponse({
-        status: HttpStatus.OK,
-        description: 'History retrieved successfully',
-        schema: {
-            type: 'object',
-            properties: {
-                success: { type: 'boolean' },
-                data: {
-                    type: 'array',
-                    items: { type: 'object' },
+  * @swagger
+  * /ai/suggest-tasks:
+  *   post:
+  *     summary: Get AI task suggestions
+  */
+    suggestTasks = asyncHandler(async (req: AuthRequest, res: Response, next: NextFunction) => {
+        try {
+            const result = await this.aiService.suggestTasks({
+                userId: req.user!.uid,
+                plannerId: req.body.plannerId,
+                sectionId: req.body.sectionId,
+                activityIds: req.body.activityIds,
+                type: 'suggestion',
+                context: {
+                    goal: req.body.goal,
+                    constraints: req.body.constraints,
+                    preferences: req.body.preferences,
                 },
-                metadata: {
-                    type: 'object',
-                    properties: {
-                        total: { type: 'number' },
-                        limit: { type: 'number' },
-                        offset: { type: 'number' },
-                    },
-                },
-            },
-        },
-    })
-    @ApiQuery({
-        name: 'limit',
-        description: 'Number of records to return',
-        required: false,
-        type: Number,
-    })
-    @ApiQuery({
-        name: 'offset',
-        description: 'Number of records to skip',
-        required: false,
-        type: Number,
-    })
-    async getRequestHistory(
-        @Query('limit', new DefaultValuePipe(20), ParseIntPipe) limit: number,
-        @Query('offset', new DefaultValuePipe(0), ParseIntPipe) offset: number,
-        @CurrentUser() user: any
-    ): Promise<any> {
-        const result = await this.aiService.getRequestHistory(user.uid, limit, offset);
-
-        return {
-            success: result.success,
-            data: result.data,
-            metadata: {
-                total: result.data?.length || 0,
-                limit,
-                offset,
-            },
-        };
-    }
+                metadata: req.body.metadata,
+            });
+            res.json(new ApiResponse(req).success(result, 'AI task suggestions generated'));
+        } catch (err) {
+            logger.error('AI suggestTasks error:', err);
+            next(err);
+        }
+    });
 
     /**
-     * Get AI usage statistics
+     * @swagger
+     * /ai/optimize-schedule:
+     *   post:
+     *     summary: Optimize schedule using AI
      */
-    @Get('usage-stats')
-    @HttpCode(HttpStatus.OK)
-    @ApiOperation({
-        summary: 'Get AI usage statistics',
-        description: 'Get your AI feature usage statistics for billing and analytics purposes',
-    })
-    @ApiResponse({
-        status: HttpStatus.OK,
-        description: 'Usage statistics retrieved successfully',
-        schema: {
-            type: 'object',
-            properties: {
-                success: { type: 'boolean' },
-                data: {
-                    type: 'object',
-                    properties: {
-                        totalRequests: { type: 'number' },
-                        requestsByType: { type: 'object' },
-                        remainingQuota: { type: 'number' },
-                        usageTrend: { type: 'array' },
-                    },
+    optimizeSchedule = asyncHandler(async (req: AuthRequest, res: Response, next: NextFunction) => {
+        try {
+            const result = await this.aiService.optimizeSchedule({
+                userId: req.user!.uid,
+                plannerId: req.body.plannerId,
+                sectionId: req.body.sectionId,
+                activityIds: req.body.activityIds,
+                type: 'optimization',
+                context: {
+                    constraints: req.body.constraints,
+                    preferences: req.body.preferences,
                 },
-            },
-        },
-    })
-    @ApiQuery({
-        name: 'period',
-        description: 'Time period for statistics',
-        required: false,
-        enum: ['day', 'week', 'month'],
-    })
-    async getUsageStats(
-        @Query('period') period: 'day' | 'week' | 'month' = 'week',
-        @CurrentUser() user: any
-    ): Promise<any> {
-        const result = await this.aiService.getUsageStats(user.uid, period);
-        return {
-            success: result.success,
-            data: result.data,
-        };
+                metadata: req.body.metadata,
+            });
+            res.json(new ApiResponse(req).success(result, 'Schedule optimized successfully'));
+        } catch (err) {
+            logger.error('AI optimizeSchedule error:', err);
+            next(err);
+        }
+    });
+
+    /**
+     * @swagger
+     * /ai/analyze-productivity:
+     *   post:
+     *     summary: Analyze productivity patterns
+     */
+    analyzeProductivity = asyncHandler(async (req: AuthRequest, res: Response, next: NextFunction) => {
+        try {
+            const result = await this.aiService.analyzeProductivity({
+                userId: req.user!.uid,
+                type: 'analysis',
+                context: {
+                    timeframe: req.body.timeRange,
+                    historicalData: req.body.historicalData,
+                },
+                metadata: { metrics: req.body.metrics },
+            });
+            res.json(new ApiResponse(req).success(result, 'Productivity analysis completed'));
+        } catch (err) {
+            logger.error('AI analyzeProductivity error:', err);
+            next(err);
+        }
+    });
+
+    /**
+     * @swagger
+     * /ai/insights:
+     *   get:
+     *     summary: Get AI insights
+     */
+    getInsights = asyncHandler(async (req: AuthRequest, res: Response, next: NextFunction) => {
+        try {
+            const result = await this.aiService.getInsights(
+                req.user!.uid,
+                req.query.type as string,
+            );
+            res.json(new ApiResponse(req).success(result, 'AI insights retrieved successfully'));
+        } catch (err) {
+            logger.error('AI getInsights error:', err);
+            next(err);
+        }
+    });
+
+    /**
+     * @swagger
+     * /ai/generate-description:
+     *   post:
+     *     summary: Generate activity description using AI
+     */
+    generateDescription = asyncHandler(async (req: AuthRequest, res: Response, next: NextFunction) => {
+        try {
+            const result = await this.aiService.generateDescription({
+                title: req.body.title,
+                context: req.body.context,
+                tone: req.body.tone,
+                userId: req.user!.uid,
+            });
+            res.json(new ApiResponse(req).success(result, 'Activity description generated successfully'));
+        } catch (err) {
+            logger.error('AI generateDescription error:', err);
+            next(err);
+        }
+    });
+
+    /**
+     * @swagger
+     * /ai/predict-duration:
+     *   post:
+     *     summary: Predict task duration using AI
+     */
+    predictDuration = asyncHandler(async (req: AuthRequest, res: Response, next: NextFunction) => {
+        try {
+            const result = await this.aiService.predictDuration({
+                title: req.body.title,
+                description: req.body.description,
+                category: req.body.category,
+                complexity: req.body.complexity,
+                userId: req.user!.uid,
+            });
+            res.json(new ApiResponse(req).success(result, 'Task duration predicted successfully'));
+        } catch (err) {
+            logger.error('AI predictDuration error:', err);
+            next(err);
+        }
+    });
+
+    async getUsage(req: AuthRequest, res: Response, next: NextFunction) {
+        const stats = await this.aiService.getUsage(req.user!.uid);
+        res.json(new ApiResponse(req).success(stats));
     }
 }

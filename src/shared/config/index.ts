@@ -22,7 +22,7 @@ const configSchema = Joi.object({
     SESSION_SECRET: Joi.string().min(256).required(),
     API_KEY_SECRET: Joi.string().min(32).required(),
     LOCKOUT_DURATION_MS: Joi.number().default(15 * 60 * 1000), // 15 minutes
-    
+
 
     // Firebase
     FIREBASE_PROJECT_ID: Joi.string().required(),
@@ -137,6 +137,25 @@ const configSchema = Joi.object({
     AI_MODEL: Joi.string().default('gpt-4'),
     AI_MAX_TOKENS: Joi.number().default(2000),
     AI_TEMPERATURE: Joi.number().min(0).max(2).default(0.7),
+    AI_TOP_P: Joi.number().min(0).max(1).default(1),
+    AI_FREQUENCY_PENALTY: Joi.number().min(0).max(2).default(0),
+    AI_PRESENCE_PENALTY: Joi.number().min(0).max(2).default(0),
+    AI_TIMEOUT_MS: Joi.number().default(30000),
+
+    // AI Rate Limits (per request type)
+    AI_RATE_LIMIT_SUGGESTION: Joi.number().default(50),
+    AI_RATE_LIMIT_OPTIMIZATION: Joi.number().default(20),
+    AI_RATE_LIMIT_ANALYSIS: Joi.number().default(30),
+    AI_RATE_LIMIT_INSIGHTS: Joi.number().default(40),
+    AI_RATE_LIMIT_NL_QUERY: Joi.number().default(100),
+    AI_RATE_LIMIT_WINDOW_MINUTES: Joi.number().default(60),
+    AI_QUOTA_FREE_DAY: Joi.number().integer().min(0).default(50),
+    AI_QUOTA_FREE_MONTH: Joi.number().integer().min(0).default(500),
+    AI_QUOTA_PREM_DAY: Joi.number().integer().min(0).default(300),
+    AI_QUOTA_PREM_MONTH: Joi.number().integer().min(0).default(3000),
+    AI_QUOTA_ENT_DAY: Joi.number().integer().min(-1).default(-1),   // -1 = unlimited
+    AI_QUOTA_ENT_MONTH: Joi.number().integer().min(-1).default(-1),
+
 
     // File Processing
     IMAGE_PROCESSING_ENABLED: Joi.boolean().default(true),
@@ -366,6 +385,23 @@ export const config = {
         model: envVars.AI_MODEL,
         maxTokens: envVars.AI_MAX_TOKENS,
         temperature: envVars.AI_TEMPERATURE,
+        topP: envVars.AI_TOP_P,
+        frequencyPenalty: envVars.AI_FREQUENCY_PENALTY,
+        presencePenalty: envVars.AI_PRESENCE_PENALTY,
+        timeout: envVars.AI_TIMEOUT_MS,
+        rateLimits: {
+            suggestion: envVars.AI_RATE_LIMIT_SUGGESTION,
+            optimization: envVars.AI_RATE_LIMIT_OPTIMIZATION,
+            analysis: envVars.AI_RATE_LIMIT_ANALYSIS,
+            insights: envVars.AI_RATE_LIMIT_INSIGHTS,
+            naturalLanguage: envVars.AI_RATE_LIMIT_NL_QUERY,
+            windowMinutes: envVars.AI_RATE_LIMIT_WINDOW_MINUTES,
+        },
+        quota: {
+            free: { day: envVars.AI_QUOTA_FREE_DAY, month: envVars.AI_QUOTA_FREE_MONTH },
+            premium: { day: envVars.AI_QUOTA_PREM_DAY, month: envVars.AI_QUOTA_PREM_MONTH },
+            enterprise: { day: envVars.AI_QUOTA_ENT_DAY, month: envVars.AI_QUOTA_ENT_MONTH },
+        },
     },
 
     imageProcessing: {

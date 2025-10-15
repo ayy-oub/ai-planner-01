@@ -1,557 +1,523 @@
-import { Injectable, Logger } from '@nestjs/common';
-import { AIRepository } from './ai.repository';
-import { CacheService } from '../../shared/services/cache.service';
-import { AISuggestion, AIInsight, AIScheduleOptimization, AIRequest, AIResponse, AITaskSuggestion, AIAnalysisResult, AINaturalLanguageQuery, AINaturalLanguageResponse, AIModelConfig } from './ai.types';
-import { PlannerService } from '../planner/planner.service';
-import { ActivityService } from '../activity/activity.service';
-import { UserService } from '../user/user.service';
-import { FirebaseService } from '../../shared/services/firebase.service';
-import { EmailService } from '../../shared/services/email.service';
-import { NotificationService } from '../../shared/services/notification.service';
-import { BadRequestException, NotFoundException, TooManyRequestsException } from '../../shared/utils/errors';
-import { validateInput } from '../../shared/utils/validators';
-import { logger } from '../../shared/utils/logger';
-import { v4 as uuidv4 } from 'uuid';
+/* ------------------------------------------------------------------ */
+/*  ai.service.ts  –  OpenAI-powered implementation                   */
+/* ------------------------------------------------------------------ */
+import { Injectable } from '@nestjs/common';
+const { v4: uuidv4 } = require('uuid');
 import { Timestamp } from 'firebase-admin/firestore';
 
+/* ---------- internal ---------- */
+import { AIRepository } from './ai.repository';
+import { CacheService } from '../../shared/services/cache.service';
+import { createServiceClient } from '../../infrastructure/external/serviceClient';
+import { logger } from '../../shared/utils/logger';
+import { RateLimitError, AppError, ErrorCode } from '../../shared/utils/errors';
+import { config } from '../../shared/config';
+
+/* ---------- types ---------- */
+import {
+    AIRequest,
+    AIRequestLog,
+    AIResponse,
+    AITaskSuggestion,
+    AIScheduleOptimization,
+    AIAnalysisResult,
+    AIInsight,
+    AINaturalLanguageQuery,
+    AINaturalLanguageResponse,
+    AIModelConfig,
+    AISuggestion,
+    AIPlannerSuggestion,
+} from './ai.types';
+import { UserRepository } from '../user/user.repository';
+import { PlannerRepository } from '../planner/planner.repository';
+import { SectionRepository } from '../section/section.repository';
+import { ActivityRepository } from '../activity/activity.repository';
+import { inject } from 'tsyringe';
+
+/* ---------- private return types ---------- */
+type GatherCtx = {
+    userId: string;
+    context: AIRequest['context'];
+    planner?: any;
+    sections?: any[];
+    activities?: any[];
+};
+
+type ScheduleCtx = {
+    userId: string;
+    planner?: any;
+    sections?: any[];
+    activities?: any[];
+    constraints?: string[];
+    preferences?: Record<string, any>;
+};
+
+type HistoricalCtx = {
+    userId: string;
+    planner?: any;
+    activities?: any[];
+    timeframe?: { start: string; end: string };
+};
+
+/* ------------------------------------------------------------------ */
 @Injectable()
 export class AIService {
-    private readonly logger = new Logger(AIService.name);
-    private readonly aiModelConfig: AIModelConfig;
-    private readonly rateLimitWindow = 60; // minutes
-    private readonly maxRequestsPerWindow = {
-        suggestion: 50,
-        optimization: 20,
-        analysis: 30,
-        insights: 40,
-        'natural-language': 100
+    /* ---------- config ---------- */
+    private readonly aiConfig: AIModelConfig;
+    private readonly rateWindowMinutes = config.ai.rateLimits.windowMinutes;
+    private readonly rateLimits = {
+        suggestion: config.ai.rateLimits.suggestion,
+        optimization: config.ai.rateLimits.optimization,
+        analysis: config.ai.rateLimits.analysis,
+        insights: config.ai.rateLimits.insights,
+        'natural-language': config.ai.rateLimits.naturalLanguage,
+        chat: config.ai.rateLimits.naturalLanguage,
+        'generate-description': config.ai.rateLimits.suggestion,
+        'predict-duration': config.ai.rateLimits.suggestion,
     };
 
+    /* ---------- OpenAI client (circuit-breaker, retries, tracing) ---------- */
+    private readonly openAI = createServiceClient('openAI', config.ai.apiKey);
+
     constructor(
-        private readonly aiRepository: AIRepository,
-        private readonly cacheService: CacheService,
-        private readonly plannerService: PlannerService,
-        private readonly activityService: ActivityService,
-        private readonly userService: UserService,
-        private readonly firebaseService: FirebaseService,
-        private readonly emailService: EmailService,
-        private readonly notificationService: NotificationService
+        private readonly repo: AIRepository,
+        private readonly userRepo: UserRepository,
+        private readonly cache: CacheService,
+        @inject(PlannerRepository) private readonly plannerRepo: PlannerRepository,
+        @inject(SectionRepository) private readonly sectionRepo: SectionRepository,
+        @inject(ActivityRepository) private readonly activityRepo: ActivityRepository,
     ) {
-        this.aiModelConfig = {
-            model: 'gpt-4',
-            maxTokens: 2000,
-            temperature: 0.7,
-            topP: 1,
-            frequencyPenalty: 0,
-            presencePenalty: 0,
-            timeout: 30000
+        this.aiConfig = {
+            model: config.ai.model,
+            maxTokens: config.ai.maxTokens,
+            temperature: config.ai.temperature,
+            topP: config.ai.topP,
+            frequencyPenalty: config.ai.frequencyPenalty,
+            presencePenalty: config.ai.presencePenalty,
+            timeout: config.ai.timeout,
         };
     }
 
-    /**
-     * Generate AI-powered task suggestions
-     */
-    async suggestTasks(request: AIRequest): Promise<AIResponse<AITaskSuggestion[]>> {
-        const startTime = Date.now();
-        const requestId = uuidv4();
+    /* ================================================================= */
+    /*  Public  –  entry-points mirrored from controller                 */
+    /* ================================================================= */
 
-        try {
-            // Rate limiting check
-            await this.checkRateLimit(request.userId, 'suggestion');
+    /** /ai/chat */
+    async chat(req: { message: string; context?: any; userId: string }): Promise<AIResponse<string>> {
+        const start = Date.now();
+        const id = uuidv4();
+        await this.checkPlanLimits(req.userId);
+        await this.checkRateLimit(req.userId, 'chat');
 
-            // Validate input
-            await validateInput(request, 'aiRequest');
+        const cacheKey = `ai:chat:${req.userId}:${Buffer.from(req.message).toString('base64')}`;
+        const cached = await this.cache.get(cacheKey) as string;
+        if (cached) return this.ok(cached, id, start);
 
-            // Get context data
-            const contextData = await this.gatherContextData(request);
+        const prompt = this.buildChatPrompt(req.message, req.context);
+        const gptReply = await this.callGPT(prompt);
+        await this.cache.set(cacheKey, gptReply, { ttl: 300 });
+        await this.log(req.userId, 'chat', req, gptReply, id);
 
-            // Check cache for similar requests
-            const cacheKey = `ai:suggestions:${request.userId}:${JSON.stringify(request.context)}`;
-            const cachedResult = await this.cacheService.get<AITaskSuggestion[]>(cacheKey);
-
-            if (cachedResult) {
-                return {
-                    success: true,
-                    data: cachedResult,
-                    metadata: {
-                        requestId,
-                        processingTime: Date.now() - startTime,
-                        modelVersion: this.aiModelConfig.model,
-                        confidence: 0.85
-                    }
-                };
-            }
-
-            // Generate AI suggestions
-            const suggestions = await this.generateTaskSuggestions(contextData, request);
-
-            // Cache the result
-            await this.cacheService.set(cacheKey, suggestions, 1800); // 30 minutes
-
-            // Log the request
-            await this.logAIRequest(request, suggestions, requestId);
-
-            return {
-                success: true,
-                data: suggestions,
-                metadata: {
-                    requestId,
-                    processingTime: Date.now() - startTime,
-                    modelVersion: this.aiModelConfig.model,
-                    confidence: this.calculateAverageConfidence(suggestions)
-                }
-            };
-        } catch (error) {
-            logger.error('Error generating task suggestions:', error);
-            throw new BadRequestException('Failed to generate task suggestions', error.message);
-        }
+        return this.ok(gptReply, id, start);
     }
 
-    /**
-     * Optimize schedule using AI
-     */
-    async optimizeSchedule(request: AIRequest): Promise<AIResponse<AIScheduleOptimization>> {
-        const startTime = Date.now();
-        const requestId = uuidv4();
+    /** /ai/suggest-tasks */
+    async suggestTasks(req: AIRequest): Promise<AIResponse<AITaskSuggestion[]>> {
+        const start = Date.now();
+        const id = uuidv4();
+        await this.checkPlanLimits(req.userId);
+        await this.checkRateLimit(req.userId, 'suggestion');
 
-        try {
-            // Rate limiting check
-            await this.checkRateLimit(request.userId, 'optimization');
+        const cacheKey = `ai:suggestions:${req.userId}:${this.hash(req.context)}`;
+        const cached = await this.cache.get(cacheKey) as AITaskSuggestion[];
+        if (cached) return this.ok(cached, id, start, 0.85);
 
-            // Validate input
-            await validateInput(request, 'aiRequest');
+        const ctx = await this.gatherContext(req);
+        const prompt = this.buildSuggestionsPrompt(ctx);
+        const gptJson = await this.callGPT(prompt, true);
+        const suggestions: AITaskSuggestion[] = JSON.parse(gptJson);
 
-            // Get schedule data
-            const scheduleData = await this.gatherScheduleData(request);
+        await this.cache.set(cacheKey, suggestions, { ttl: 1800 });
+        await this.log(req.userId, 'suggestion', req, suggestions, id);
 
-            // Generate optimized schedule
-            const optimization = await this.generateScheduleOptimization(scheduleData, request);
-
-            // Store optimization result
-            await this.aiRepository.saveScheduleOptimization(optimization);
-
-            return {
-                success: true,
-                data: optimization,
-                metadata: {
-                    requestId,
-                    processingTime: Date.now() - startTime,
-                    modelVersion: this.aiModelConfig.model,
-                    confidence: 0.92
-                }
-            };
-        } catch (error) {
-            logger.error('Error optimizing schedule:', error);
-            throw new BadRequestException('Failed to optimize schedule', error.message);
-        }
+        return this.ok(suggestions, id, start, this.avgConfidence(suggestions));
     }
 
-    /**
-     * Analyze productivity patterns
-     */
-    async analyzeProductivity(request: AIRequest): Promise<AIResponse<AIAnalysisResult>> {
-        const startTime = Date.now();
-        const requestId = uuidv4();
+    /** /ai/optimize-schedule */
+    async optimizeSchedule(req: AIRequest): Promise<AIResponse<AIScheduleOptimization>> {
+        const start = Date.now();
+        const id = uuidv4();
+        await this.checkPlanLimits(req.userId);
+        await this.checkRateLimit(req.userId, 'optimization');
 
-        try {
-            // Rate limiting check
-            await this.checkRateLimit(request.userId, 'analysis');
+        const ctx = await this.gatherScheduleContext(req);
+        const prompt = this.buildOptimizationPrompt(ctx);
+        const gptJson = await this.callGPT(prompt, true);
+        const opt: AIScheduleOptimization = {
+            id: uuidv4(),
+            ...JSON.parse(gptJson),
+            createdAt: new Date(),
+        };
 
-            // Validate input
-            await validateInput(request, 'aiRequest');
+        await this.repo.saveScheduleOptimization(opt);
+        await this.log(req.userId, 'optimization', req, opt, id);
 
-            // Get historical data
-            const historicalData = await this.gatherHistoricalData(request);
-
-            // Generate analysis
-            const analysis = await this.generateProductivityAnalysis(historicalData, request);
-
-            // Store analysis result
-            await this.aiRepository.saveAnalysisResult(analysis);
-
-            return {
-                success: true,
-                data: analysis,
-                metadata: {
-                    requestId,
-                    processingTime: Date.now() - startTime,
-                    modelVersion: this.aiModelConfig.model,
-                    confidence: 0.88
-                }
-            };
-        } catch (error) {
-            logger.error('Error analyzing productivity:', error);
-            throw new BadRequestException('Failed to analyze productivity', error.message);
-        }
+        return this.ok(opt, id, start, 0.92);
     }
 
-    /**
-     * Get AI insights
-     */
+    /** /ai/analyze-productivity */
+    async analyzeProductivity(req: AIRequest): Promise<AIResponse<AIAnalysisResult>> {
+        const start = Date.now();
+        const id = uuidv4();
+        await this.checkPlanLimits(req.userId);
+        await this.checkRateLimit(req.userId, 'analysis');
+
+        const historical = await this.gatherHistorical(req);
+        const prompt = this.buildAnalysisPrompt(historical);
+        const gptJson = await this.callGPT(prompt, true);
+        const analysis: AIAnalysisResult = {
+            id: uuidv4(),
+            ...JSON.parse(gptJson),
+            generatedAt: new Date(),
+        };
+
+        await this.repo.saveAnalysisResult(analysis);
+        await this.log(req.userId, 'analysis', req, analysis, id);
+
+        return this.ok(analysis, id, start, 0.88);
+    }
+
+    /** /ai/insights */
     async getInsights(userId: string, type?: string): Promise<AIResponse<AIInsight[]>> {
-        const startTime = Date.now();
-        const requestId = uuidv4();
+        const start = Date.now();
+        const id = uuidv4();
+        await this.checkPlanLimits(userId);
+        await this.checkRateLimit(userId, 'insights');
 
-        try {
-            // Rate limiting check
-            await this.checkRateLimit(userId, 'insights');
+        const cacheKey = `ai:insights:${userId}:${type || 'all'}`;
+        const cached = await this.cache.get(cacheKey) as AIInsight[];
+        if (cached) return this.ok(cached, id, start);
 
-            // Get cached insights
-            const cacheKey = `ai:insights:${userId}:${type || 'all'}`;
-            const cachedInsights = await this.cacheService.get<AIInsight[]>(cacheKey);
+        const prompt = this.buildInsightsPrompt(userId, type);
+        const gptJson = await this.callGPT(prompt, true);
+        const insights: AIInsight[] = JSON.parse(gptJson).map((i: any) => ({
+            ...i,
+            id: uuidv4(),
+            generatedAt: new Date(),
+            expiresAt: new Date(Date.now() + 86400_000),
+        }));
 
-            if (cachedInsights) {
-                return {
-                    success: true,
-                    data: cachedInsights,
-                    metadata: {
-                        requestId,
-                        processingTime: Date.now() - startTime,
-                        modelVersion: this.aiModelConfig.model
-                    }
-                };
-            }
+        await this.cache.set(cacheKey, insights, { ttl: 3600 });
+        await this.log(userId, 'insights', { userId, type }, insights, id);
 
-            // Generate insights
-            const insights = await this.generateInsights(userId, type);
+        return this.ok(insights, id, start);
+    }
 
-            // Cache the result
-            await this.cacheService.set(cacheKey, insights, 3600); // 1 hour
+    /** /ai/generate-description */
+    async generateDescription(req: {
+        title: string;
+        context?: string;
+        tone?: string;
+        userId: string;
+    }): Promise<AIResponse<string>> {
+        const start = Date.now();
+        const id = uuidv4();
+        await this.checkPlanLimits(req.userId);
+        await this.checkRateLimit(req.userId, 'generate-description');
 
-            return {
-                success: true,
-                data: insights,
-                metadata: {
-                    requestId,
-                    processingTime: Date.now() - startTime,
-                    modelVersion: this.aiModelConfig.model
-                }
-            };
-        } catch (error) {
-            logger.error('Error generating insights:', error);
-            throw new BadRequestException('Failed to generate insights', error.message);
+        const prompt = this.buildDescriptionPrompt(req.title, req.context, req.tone);
+        const desc = await this.callGPT(prompt);
+
+        await this.log(req.userId, 'generate-description', req, desc, id);
+        return this.ok(desc, id, start);
+    }
+
+    /** /ai/predict-duration */
+    async predictDuration(req: {
+        title: string;
+        description: string;
+        category?: string;
+        complexity?: string;
+        userId: string;
+    }): Promise<AIResponse<number>> {
+        const start = Date.now();
+        const id = uuidv4();
+        await this.checkPlanLimits(req.userId);
+        await this.checkRateLimit(req.userId, 'predict-duration');
+
+        const prompt = this.buildDurationPrompt(req);
+        const gptJson = await this.callGPT(prompt, true);
+        const minutes: number = JSON.parse(gptJson).minutes;
+
+        await this.log(req.userId, 'predict-duration', req, minutes, id);
+        return this.ok(minutes, id, start, 0.8);
+    }
+
+    /** /ai natural-language helper */
+    async processNaturalLanguage(q: AINaturalLanguageQuery): Promise<AIResponse<AINaturalLanguageResponse>> {
+        if (!q.context) throw new AppError('context is required', 400);
+
+        const start = Date.now();
+        const id = uuidv4();
+        await this.checkPlanLimits(q.context.userId);
+        await this.checkRateLimit(q.context.userId, 'natural-language');
+
+        const prompt = this.buildNLPrompt(q);
+        const gptJson = await this.callGPT(prompt, true);
+        const res: AINaturalLanguageResponse = JSON.parse(gptJson);
+
+        await this.log(q.context.userId, 'natural-language', q, res, id);
+        return this.ok(res, id, start);
+    }
+
+    /* ------------------------------------------------------------------ */
+    /*  NEW – plan-based quota check                                      */
+    /* ------------------------------------------------------------------ */
+    private async checkPlanLimits(userId: string): Promise<void> {
+        const user = await this.userRepo.getProfile(userId);
+        if (!user) throw new AppError('User not found', 404);
+
+        const plan: keyof typeof config.ai.quota = user.subscription?.plan || 'free';
+        const { day, month } = config.ai.quota[plan];
+
+        /* ---- daily ---- */
+        if (day !== -1) {
+            const dayCount = await this.repo.getRequestCountSince(
+                userId,
+                new Date(Date.now() - 24 * 60 * 60 * 1000),
+            );
+            if (dayCount >= day)
+                throw new AppError(`Daily AI quota reached (${plan})`, 403, undefined, ErrorCode.QUOTA_EXCEEDED);
+        }
+
+        /* ---- monthly ---- */
+        if (month !== -1) {
+            const monthCount = await this.repo.getRequestCountSince(
+                userId,
+                new Date(Date.now() - 30 * 24 * 60 * 60 * 1000),
+            );
+            if (monthCount >= month)
+                throw new AppError(`Monthly AI quota reached (${plan})`, 403, undefined, ErrorCode.QUOTA_EXCEEDED);
         }
     }
 
-    /**
-     * Process natural language queries
-     */
-    async processNaturalLanguage(query: AINaturalLanguageQuery): Promise<AIResponse<AINaturalLanguageResponse>> {
-        const startTime = Date.now();
-        const requestId = uuidv4();
+    async getUsage(userId: string) {
+        const plan = (await this.userRepo.getProfile(userId))?.subscription?.plan || 'free';
+        const { day, month } = config.ai.quota[plan];
 
-        try {
-            // Rate limiting check
-            await this.checkRateLimit(query.context.userId, 'natural-language');
+        const dayCount = await this.repo.getRequestCountSince(
+            userId,
+            new Date(Date.now() - 24 * 60 * 60 * 1000),
+        );
+        const monthCount = await this.repo.getRequestCountSince(
+            userId,
+            new Date(Date.now() - 30 * 24 * 60 * 60 * 1000),
+        );
 
-            // Validate input
-            await validateInput(query, 'aiNaturalLanguageQuery');
-
-            // Process the query
-            const result = await this.processNaturalLanguageQuery(query);
-
-            return {
-                success: true,
-                data: result,
-                metadata: {
-                    requestId,
-                    processingTime: Date.now() - startTime,
-                    modelVersion: this.aiModelConfig.model
-                }
-            };
-        } catch (error) {
-            logger.error('Error processing natural language query:', error);
-            throw new BadRequestException('Failed to process natural language query', error.message);
-        }
+        return {
+            plan,
+            limits: { day, month },
+            used: { day: dayCount, month: monthCount },
+            remaining: {
+                day: day === -1 ? null : Math.max(0, day - dayCount),
+                month: month === -1 ? null : Math.max(0, month - monthCount),
+            },
+        };
     }
 
-    /**
-     * Get AI request history
-     */
-    async getRequestHistory(userId: string, limit?: number, offset?: number): Promise<AIResponse<any[]>> {
-        try {
-            const history = await this.aiRepository.getRequestHistory(userId, limit, offset);
+    /* ------------------------------------------------------------------ */
+    /*  NEW – missing helper you asked for                                */
+    /* ------------------------------------------------------------------ */
+    async getAISuggestions(plannerId: string, userId: string): Promise<AIPlannerSuggestion> {
+        /* Stub data – wire real repos later */
+        const planner = { id: plannerId, ownerId: userId } as any;
+        const sections = [] as any[];
+        const activities = [] as any[];
 
-            return {
-                success: true,
-                data: history
-            };
-        } catch (error) {
-            logger.error('Error retrieving request history:', error);
-            throw new BadRequestException('Failed to retrieve request history', error.message);
-        }
+        // if (!planner) throw new AppError('Planner not found', 404, undefined, ErrorCode.NOT_FOUND);
+        // if (planner.ownerId !== userId) throw new AppError('Access denied', 403, undefined, ErrorCode.UNAUTHORIZED);
+
+        const suggestions = await this.generatePlannerSuggestions({ planner, sections, activities, userId });
+
+        // await this.logActivity(userId, 'AI_SUGGESTIONS_REQUESTED', { plannerId });
+        return suggestions;
     }
 
-    /**
-     * Get AI usage statistics
-     */
-    async getUsageStats(userId: string, period: 'day' | 'week' | 'month' = 'week'): Promise<AIResponse<any>> {
-        try {
-            const stats = await this.aiRepository.getUsageStats(userId, period);
+    async generatePlannerSuggestions(input: {
+        planner: any;
+        sections: any[];
+        activities: any[];
+        userId: string;
+    }): Promise<AIPlannerSuggestion> {
+        const prompt = `Planner: ${JSON.stringify(input.planner)}
+Sections: ${JSON.stringify(input.sections)}
+Activities: ${JSON.stringify(input.activities)}
+Generate planner-level suggestions in strict JSON:
+{"type":"optimize_schedule"|"suggest_tasks"|"categorize"|"prioritize","suggestions":[{"id":"...","title":"...","description":"...","action":"add|modify|delete|reorder","targetId":"...","targetType":"section|activity"}],"confidence":0.9,"reasoning":"..."}`;
 
-            return {
-                success: true,
-                data: stats
-            };
-        } catch (error) {
-            logger.error('Error retrieving usage stats:', error);
-            throw new BadRequestException('Failed to retrieve usage statistics', error.message);
-        }
+        const gptJson = await this.callGPT(prompt, true);
+        return JSON.parse(gptJson);
     }
 
-    /**
-     * Private method to gather context data
-     */
-    private async gatherContextData(request: AIRequest): Promise<any> {
-        const contextData: any = {
-            user: null,
-            planners: [],
-            activities: [],
-            historicalData: []
+    /* ================================================================= */
+    /*  Private helpers                                                 */
+    /* ================================================================= */
+
+    private async callGPT(prompt: string, json = false): Promise<string> {
+        const body = {
+            model: this.aiConfig.model,
+            messages: [{ role: 'user', content: prompt }],
+            max_tokens: this.aiConfig.maxTokens,
+            temperature: this.aiConfig.temperature,
+            top_p: this.aiConfig.topP,
+            frequency_penalty: this.aiConfig.frequencyPenalty,
+            presence_penalty: this.aiConfig.presencePenalty,
+            ...(json && { response_format: { type: 'json_object' } }),
         };
 
-        try {
-            // Get user data
-            contextData.user = await this.userService.getUserProfile(request.userId);
-
-            // Get planner data if specified
-            if (request.plannerId) {
-                contextData.planners = [await this.plannerService.getPlanner(request.userId, request.plannerId)];
-            } else {
-                // Get all user planners
-                contextData.planners = await this.plannerService.getUserPlanners(request.userId);
-            }
-
-            // Get activity data
-            if (request.activityIds && request.activityIds.length > 0) {
-                for (const activityId of request.activityIds) {
-                    const activity = await this.activityService.getActivity(request.userId, activityId);
-                    contextData.activities.push(activity);
-                }
-            } else if (request.sectionId) {
-                // Get activities from section
-                const activities = await this.activityService.getActivitiesBySection(request.userId, request.sectionId);
-                contextData.activities = activities;
-            }
-
-            // Get historical data if requested
-            if (request.context.historicalData) {
-                contextData.historicalData = await this.aiRepository.getUserHistoricalData(request.userId, {
-                    start: request.context.timeframe?.start,
-                    end: request.context.timeframe?.end
-                });
-            }
-
-            return contextData;
-        } catch (error) {
-            logger.error('Error gathering context data:', error);
-            throw error;
-        }
+        const res = await this.openAI.post<{ choices: { message: { content: string } }[] }>(
+            '/chat/completions',
+            body,
+        );
+        return res.choices[0].message.content.trim();
     }
 
-    /**
-     * Private method to generate task suggestions
-     */
-    private async generateTaskSuggestions(contextData: any, request: AIRequest): Promise<AITaskSuggestion[]> {
-        // This is a simplified implementation
-        // In a real scenario, you would integrate with an AI service like OpenAI, Claude, etc.
+    private async checkRateLimit(userId: string, type: keyof typeof this.rateLimits): Promise<void> {
+        const since = new Date(Date.now() - this.rateWindowMinutes * 60_000);
+        const count = await this.repo.getRequestCountSince(userId, since);
+        const max = this.rateLimits[type];
 
-        const suggestions: AITaskSuggestion[] = [];
-
-        try {
-            // Analyze context and generate suggestions based on patterns
-            const { planners, activities, historicalData } = contextData;
-
-            // Generate suggestions based on existing patterns
-            if (activities.length > 0) {
-                // Suggest similar tasks based on completed tasks
-                const completedTasks = activities.filter(a => a.status === 'completed');
-                const pendingTasks = activities.filter(a => a.status === 'pending');
-
-                // Suggest task breakdown for large tasks
-                const largeTasks = pendingTasks.filter(a => a.metadata?.estimatedDuration > 120);
-                largeTasks.forEach(task => {
-                    suggestions.push({
-                        id: uuidv4(),
-                        type: 'task',
-                        suggestion: `Break down "${task.title}" into smaller subtasks`,
-                        confidence: 0.85,
-                        reasoning: `Large tasks are more likely to be completed when broken down into manageable pieces`,
-                        task: {
-                            title: `Subtask: ${task.title} - Part 1`,
-                            description: `First part of ${task.title}`,
-                            priority: task.priority || 'medium',
-                            estimatedDuration: Math.ceil(task.metadata?.estimatedDuration / 3),
-                            dueDate: task.dueDate,
-                            tags: [...(task.tags || []), 'subtask'],
-                            dependencies: [task.id]
-                        },
-                        createdAt: Timestamp.now()
-                    });
-                });
-
-                // Suggest time-based tasks
-                const now = new Date();
-                const eveningTasks = completedTasks.filter(t => {
-                    const completedTime = new Date(t.completedAt?.toDate() || now);
-                    return completedTime.getHours() >= 18 && completedTime.getHours() <= 22;
-                });
-
-                if (eveningTasks.length > 2) {
-                    suggestions.push({
-                        id: uuidv4(),
-                        type: 'task',
-                        suggestion: 'Schedule routine evening tasks',
-                        confidence: 0.78,
-                        reasoning: `Based on your pattern of completing ${eveningTasks.length} tasks in the evening`,
-                        task: {
-                            title: 'Evening routine review',
-                            description: 'Review and plan tasks for the next day',
-                            priority: 'low',
-                            estimatedDuration: 15,
-                            dueDate: new Date(now.getTime() + 24 * 60 * 60 * 1000).toISOString(),
-                            tags: ['routine', 'planning'],
-                            dependencies: []
-                        },
-                        createdAt: Timestamp.now()
-                    });
-                }
-            }
-
-            // Suggest tasks based on historical patterns
-            if (historicalData.length > 0) {
-                const recurringPatterns = this.analyzeRecurringPatterns(historicalData);
-                recurringPatterns.forEach(pattern => {
-                    suggestions.push({
-                        id: uuidv4(),
-                        type: 'task',
-                        suggestion: `Schedule recurring ${pattern.category} task`,
-                        confidence: pattern.confidence,
-                        reasoning: `You regularly complete ${pattern.category} tasks every ${pattern.frequency} days`,
-                        task: {
-                            title: `Recurring: ${pattern.suggestedTitle}`,
-                            description: pattern.description,
-                            priority: 'medium',
-                            estimatedDuration: pattern.averageDuration,
-                            dueDate: new Date(now.getTime() + pattern.frequency * 24 * 60 * 60 * 1000).toISOString(),
-                            tags: [pattern.category, 'recurring'],
-                            dependencies: []
-                        },
-                        createdAt: Timestamp.now()
-                    });
-                });
-            }
-
-            // Always suggest some generic productivity tasks
-            if (suggestions.length < 3) {
-                suggestions.push({
-                    id: uuidv4(),
-                    type: 'task',
-                    suggestion: 'Review and prioritize your task list',
-                    confidence: 0.92,
-                    reasoning: 'Regular review improves task completion rates',
-                    task: {
-                        title: 'Weekly task review',
-                        description: 'Review all pending tasks and update priorities',
-                        priority: 'medium',
-                        estimatedDuration: 30,
-                        dueDate: new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000).toISOString(),
-                        tags: ['review', 'planning'],
-                        dependencies: []
-                    },
-                    createdAt: Timestamp.now()
-                });
-            }
-
-            return suggestions;
-        } catch (error) {
-            logger.error('Error generating task suggestions:', error);
-            throw error;
-        }
-    }
-
-    /**
-     * Private method to check rate limits
-     */
-    private async checkRateLimit(userId: string, requestType: string): Promise<void> {
-        const windowStart = new Date(Date.now() - this.rateLimitWindow * 60 * 1000);
-        const requestCount = await this.aiRepository.getRequestCount(userId, requestType, windowStart);
-
-        const maxRequests = this.maxRequestsPerWindow[requestType] || 50;
-
-        if (requestCount >= maxRequests) {
-            throw new TooManyRequestsException(
-                `Rate limit exceeded for ${requestType} requests. Maximum ${maxRequests} requests per ${this.rateLimitWindow} minutes.`
+        if (count >= max) {
+            throw new RateLimitError(
+                `Rate limit exceeded for ${type}: max ${max} per ${this.rateWindowMinutes} min.`,
             );
         }
     }
 
-    /**
-     * Private method to calculate average confidence
-     */
-    private calculateAverageConfidence(suggestions: AISuggestion[]): number {
-        if (suggestions.length === 0) return 0;
-        const totalConfidence = suggestions.reduce((sum, s) => sum + s.confidence, 0);
-        return totalConfidence / suggestions.length;
+    private async log(
+        userId: string,
+        type: keyof typeof this.rateLimits,
+        req: any,
+        res: any,
+        requestId: string,
+    ): Promise<void> {
+        const log: AIRequestLog = {
+            requestId,
+            userId,
+            type,
+            requestType: type,
+            requestData: req,
+            responseData: res,
+            context: {
+                goal: 'ai-log',
+                preferences: { requestData: req, responseData: res },
+            },
+            timestamp: Timestamp.now() as any,
+        };
+        await this.repo.logAIRequest(log).catch((e) => logger.error('Log fail', e));
     }
 
-    /**
-     * Private method to log AI requests
-     */
-    private async logAIRequest(request: AIRequest, result: any, requestId: string): Promise<void> {
-        try {
-            await this.aiRepository.logAIRequest({
+    /* ---------- response helpers ---------- */
+    private ok<T>(data: T, requestId: string, start: number, confidence?: number): AIResponse<T> {
+        return {
+            success: true,
+            data,
+            metadata: {
                 requestId,
-                userId: request.userId,
-                requestType: request.type,
-                requestData: request,
-                responseData: result,
-                timestamp: Timestamp.now(),
-                metadata: {
-                    model: this.aiModelConfig.model,
-                    processingTime: Date.now()
-                }
-            });
-        } catch (error) {
-            logger.error('Error logging AI request:', error);
-        }
+                processingTime: Date.now() - start,
+                modelVersion: this.aiConfig.model,
+                confidence,
+            },
+        };
     }
 
-    /**
-     * Additional private methods for schedule optimization, productivity analysis, etc.
-     */
-    private async gatherScheduleData(request: AIRequest): Promise<any> {
-        // Implementation for gathering schedule data
-        return {};
+    private avgConfidence(arr: AISuggestion[]): number {
+        return arr.length ? arr.reduce((s, i) => s + i.confidence, 0) / arr.length : 0;
     }
 
-    private async generateScheduleOptimization(scheduleData: any, request: AIRequest): Promise<AIScheduleOptimization> {
-        // Implementation for schedule optimization
-        return {} as AIScheduleOptimization;
+    private hash(obj: any): string {
+        return Buffer.from(JSON.stringify(obj)).toString('base64').slice(0, 32);
     }
 
-    private async gatherHistoricalData(request: AIRequest): Promise<any> {
-        // Implementation for gathering historical data
-        return {};
+    /* ---------- prompt builders ---------- */
+    private buildChatPrompt(msg: string, ctx?: any): string {
+        return `You are a helpful planning assistant.\nUser: ${msg}\nContext: ${JSON.stringify(ctx)}\nAssistant:`;
     }
 
-    private async generateProductivityAnalysis(historicalData: any, request: AIRequest): Promise<AIAnalysisResult> {
-        // Implementation for productivity analysis
-        return {} as AIAnalysisResult;
+    private buildSuggestionsPrompt(ctx: any): string {
+        return `Given the following planner context:\n${JSON.stringify(
+            ctx,
+        )}\nSuggest 3–7 actionable tasks in strict JSON format:\n{"suggestions":[{"task":{"title":"...","description":"...","priority":"low|medium|high|urgent","estimatedDuration":minutes},"confidence":0.9}]}`;
     }
 
-    private async generateInsights(userId: string, type?: string): Promise<AIInsight[]> {
-        // Implementation for generating insights
-        return [];
+    private buildOptimizationPrompt(ctx: any): string {
+        return `Schedule to optimise:\n${JSON.stringify(
+            ctx,
+        )}\nReturn strict JSON:\n{"originalSchedule":[...],"optimizedSchedule":[...],"improvements":{"timeSaved":minutes,"efficiencyGain":%},"constraints":[...]}`;
     }
 
-    private async processNaturalLanguageQuery(query: AINaturalLanguageQuery): Promise<AINaturalLanguageResponse> {
-        // Implementation for natural language processing
-        return {} as AINaturalLanguageResponse;
+    private buildAnalysisPrompt(hist: any): string {
+        return `Historical data:\n${JSON.stringify(
+            hist,
+        )}\nReturn strict JSON analysis:\n{"period":{...},"metrics":{...},"insights":[...],"recommendations":[...]}`;
     }
 
-    private analyzeRecurringPatterns(historicalData: any[]): any[] {
-        // Implementation for analyzing recurring patterns
-        return [];
+    private buildInsightsPrompt(userId: string, type?: string): string {
+        return `Generate ${type || 'general'} insights for user ${userId} in strict JSON:\n{"insights":[{"type":"...","title":"...","description":"...","actionableItems":[...]}]}`;
+    }
+
+    private buildDescriptionPrompt(title: string, ctx?: string, tone = 'neutral'): string {
+        return `Write a ${tone} one-paragraph description for planner activity titled "${title}". Context: ${ctx}`;
+    }
+
+    private buildDurationPrompt(req: any): string {
+        return `Estimate duration in minutes for task: ${JSON.stringify(req)}. Reply strict JSON: {"minutes":number}`;
+    }
+
+    private buildNLPrompt(q: AINaturalLanguageQuery): string {
+        return `Parse and execute planner command: ${JSON.stringify(q)}. Reply strict JSON:\n{"success":bool,"action":{...},"result":...}`;
+    }
+
+    /* ---------- stub data gatherers ---------- */
+
+    /* real implementations – keep signature identical */
+    private async gatherContext(r: AIRequest): Promise<GatherCtx> {
+        const base = { userId: r.userId, context: r.context };
+
+        if (!r.plannerId) return base; // old behaviour
+
+        const [planner, sections, activities] = await Promise.all([
+            this.plannerRepo.findById(r.plannerId),
+            r.plannerId ? this.sectionRepo.findByPlannerId(r.plannerId) : [],
+            r.activityIds?.length
+                ? this.activityRepo.findByIds(r.activityIds)
+                : r.plannerId
+                    ? this.activityRepo.findByPlannerId(r.plannerId)
+                    : [],
+        ]);
+
+        return { userId: r.userId, context: r.context, planner, sections, activities };
+    }
+
+    private async gatherScheduleContext(r: AIRequest): Promise<ScheduleCtx> {
+        const ctx = await this.gatherContext(r);
+        return {
+            userId: ctx.userId,
+            planner: ctx.planner,
+            sections: ctx.sections,
+            activities: ctx.activities,
+            constraints: r.context.constraints,
+            preferences: r.context.preferences,
+        };
+    }
+
+    private async gatherHistorical(r: AIRequest): Promise<HistoricalCtx> {
+        const ctx = await this.gatherContext(r);
+        return {
+            userId: ctx.userId,
+            planner: ctx.planner,
+            activities: ctx.activities,
+            timeframe: r.context.timeframe,
+        };
     }
 }

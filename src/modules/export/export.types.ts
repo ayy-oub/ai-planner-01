@@ -1,3 +1,7 @@
+/* ------------------------------------------------------------------ */
+/*  export.types.ts  –  domain models for export functionality        */
+/* ------------------------------------------------------------------ */
+
 export interface ExportRequest {
     userId: string;
     plannerId?: string;
@@ -5,13 +9,16 @@ export interface ExportRequest {
     activityIds?: string[];
     format: ExportFormat;
     type: ExportType;
-    options: ExportOptions;
+    filters?: ExportFilters;
+    dateRange?: { start: string; end: string };
+    options?: ExportOptions;
     metadata?: Record<string, any>;
 }
 
 export interface ExportOptions {
     includeCompleted?: boolean;
     includeArchived?: boolean;
+    template?: string;
     dateRange?: {
         start: Date;
         end: Date;
@@ -83,12 +90,30 @@ export interface ExportResult {
         errors?: string[];
     };
     createdAt: Date;
+    updatedAt?: Date;
     completedAt?: Date;
     expiresAt?: Date;
 }
 
 export type ExportStatus = 'pending' | 'processing' | 'completed' | 'failed' | 'expired';
 
+export interface ExportStats {
+    total: number;
+    byStatus: Record<string, number>;
+    byFormat: Record<string, number>;
+    byType: Record<string, number>;
+    averageProcessingTime: number;
+    successRate: number;
+}
+
+
+export interface ExportFilters {
+    status?: string[];
+    priority?: string[];
+    tags?: string[];
+    includeCompleted?: boolean;
+    includeArchived?: boolean;
+}
 export interface ExportTemplate {
     id: string;
     name: string;
@@ -199,6 +224,7 @@ export interface ExportQuota {
     userId: string;
     plan: 'free' | 'premium' | 'enterprise';
     monthlyQuota: number;
+    remainingQuota: number;
     usedThisMonth: number;
     resetsAt: Date;
     unlimited: boolean;

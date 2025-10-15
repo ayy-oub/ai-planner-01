@@ -1,5 +1,6 @@
 import { Attachment } from "nodemailer/lib/mailer";
-import { AISuggestion, RecurringSettings, Reminder } from "../planner/planner.types";
+import { RecurringSettings, Reminder } from "../planner/planner.types";
+import { AISuggestion } from "../ai/ai.types";
 
 /*  DOMAIN-SPECIFIC ACTIVITY TYPES  */
 export interface Activity {

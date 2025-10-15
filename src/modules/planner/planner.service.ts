@@ -21,6 +21,8 @@ import {
 } from './planner.types';
 import { AppError, ErrorCode } from '../../shared/utils/errors';
 import { logger } from '../../shared/utils/logger';
+import { ExportService } from '../export/export.service';
+import { ExportRequest } from '../export/export.types';
 
 @injectable()
 export class PlannerService {
@@ -30,6 +32,7 @@ export class PlannerService {
         @inject('SectionRepository') private readonly sectionRepo: SectionRepository,
         @inject('ActivityRepository') private readonly activityRepo: ActivityRepository,
         @inject('EmailService') private readonly email: EmailService,
+        @inject('ExportService') private readonly exportService: ExportService,
         @inject('QueueService') private readonly queue: QueueService,
         @inject('AuditService') private readonly audit: AuditService,
         @inject('AIService') private readonly ai: AIService,
@@ -279,28 +282,54 @@ export class PlannerService {
             const planner = await this.plannerRepo.findById(plannerId);
             if (!planner) throw new AppError('Planner not found', 404, undefined, ErrorCode.NOT_FOUND);
             if (!this.hasAccess(planner, userId)) throw new AppError('Access denied', 403, undefined, ErrorCode.UNAUTHORIZED);
-    
+
             let includeSections: string[] = [];
             if (data.includeSections?.length) {
                 includeSections = data.includeSections.filter(id => typeof id === 'string') as string[];
             }
-    
+
             const sections = includeSections.length
                 ? await this.sectionRepo.findByIds(includeSections)
                 : await this.sectionRepo.findByPlannerId(plannerId);
-    
+
             const activities = data.includeActivities !== false ? await this.activityRepo.findByPlannerId(plannerId) : [];
-    
+
             const exportData = {
                 planner: { title: planner.title, description: planner.description, color: planner.color, icon: planner.icon, tags: planner.tags, exportedAt: new Date() },
                 sections: sections.map(s => ({ title: s.title, description: s.description, order: s.order, type: s.type })),
                 activities: activities.map(a => ({ title: a.title, description: a.description, type: a.type, status: a.status, priority: a.priority, dueDate: a.dueDate, tags: a.tags })),
             };
-    
-            const result = await this.export.generateExport(data.format, exportData, data.template);
-    
+
+            let buffer: Buffer;
+            const exportReq: ExportRequest = {
+                userId,
+                format: data.format,
+                type: 'planner',             
+                plannerId,                     
+                options: data.template ? { template: data.template } : undefined,
+                filters: undefined,
+                dateRange: undefined,
+              };
+            switch (data.format) {
+                case 'pdf':
+                    buffer = await this.exportService.exportPdf(exportReq);
+                    break;
+                case 'csv':
+                    buffer = await this.exportService.exportCsv(exportReq);
+                    break;
+                case 'json':
+                    buffer = await this.exportService.exportJson(exportReq);
+                    break;
+                case 'ical':
+                    buffer = await this.exportService.exportCalendar(exportReq);
+                    break;
+                default:
+                    throw new AppError('Unsupported export format', 400, undefined, ErrorCode.VALIDATION_ERROR);
+            }
+
+            const result = { buffer, format: data.format, filename: `planner_${plannerId}.${data.format}` };
             this.logActivity(userId, 'PLANNER_EXPORTED', { plannerId, format: data.format });
-    
+
             return result;
         } catch (err) {
             logger.error('exportPlanner error', { plannerId, userId, data, err });
@@ -433,7 +462,7 @@ export class PlannerService {
             { title: 'In Progress', description: 'Tasks currently being worked on', order: 2, type: 'tasks' as const, settings: { collapsed: false, color: '#F59E0B', icon: 'clock', visibility: 'visible' as const } },
             { title: 'Done', description: 'Completed tasks', order: 3, type: 'tasks' as const, settings: { collapsed: false, color: '#10B981', icon: 'check', visibility: 'visible' as const } },
         ];
-    
+
         for (const s of defaults) {
             await this.sectionRepo.createSection({
                 ...s,

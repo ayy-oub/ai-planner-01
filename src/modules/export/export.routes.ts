@@ -1,9 +1,13 @@
+/* ------------------------------------------------------------------ */
+/*  export.routes.ts  –  Express router (no NestJS)                   */
+/* ------------------------------------------------------------------ */
 import { Router } from 'express';
 import { container } from 'tsyringe';
 import { ExportController } from './export.controller';
-import { authMiddleware } from '../auth/auth.middleware';
-import { validationMiddleware } from '../../shared/middleware/validation.middleware';
+import { authenticate } from '../../shared/middleware/auth.middleware';
+import { validate } from '../../shared/middleware/validation.middleware';
 import { rateLimiter } from '../../shared/middleware/rate-limit.middleware';
+import { exportValidations } from './export.validation';
 
 const router = Router();
 const exportController = container.resolve(ExportController);
@@ -16,11 +20,12 @@ const exportController = container.resolve(ExportController);
  */
 
 // All routes require authentication
-router.use(authMiddleware());
+router.use(authenticate());
+router.use(rateLimiter);
 
 /**
  * @swagger
- * /export/pdf:
+ * /pdf:
  *   post:
  *     summary: Export data as PDF
  *     tags: [Export]
@@ -33,21 +38,27 @@ router.use(authMiddleware());
  *           schema:
  *             type: object
  *             required:
- *               - data
  *               - type
+ *               - format
  *             properties:
- *               data:
- *                 type: object
  *               type:
  *                 type: string
- *                 enum: [planner, section, activity]
+ *                 enum: [planner, section, activity, report, summary]
  *               format:
  *                 type: string
- *                 enum: [standard, detailed, summary]
- *               includeMetadata:
- *                 type: boolean
- *               template:
+ *                 enum: [pdf, csv, excel, json, ical, markdown, html, txt]
+ *               plannerId:
  *                 type: string
+ *               sectionIds:
+ *                 type: array
+ *                 items:
+ *                   type: string
+ *               activityIds:
+ *                 type: array
+ *                 items:
+ *                   type: string
+ *               options:
+ *                 type: object
  *     responses:
  *       200:
  *         description: PDF exported successfully
@@ -59,15 +70,14 @@ router.use(authMiddleware());
  *       403:
  *         description: Export limit exceeded
  */
-router.post('/export/pdf',
-    rateLimiter({ windowMs: 60 * 60 * 1000, max: 10 }), // 10 exports per hour
-    validationMiddleware(exportController.exportValidation.exportPdf),
+router.post('/pdf',
+    validate(exportValidations.createExport),
     exportController.exportPdf
 );
 
 /**
  * @swagger
- * /export/calendar:
+ * /calendar:
  *   post:
  *     summary: Export to calendar format
  *     tags: [Export]
@@ -80,20 +90,27 @@ router.post('/export/pdf',
  *           schema:
  *             type: object
  *             required:
- *               - data
+ *               - type
  *               - format
  *             properties:
- *               data:
- *                 type: object
+ *               type:
+ *                 type: string
+ *                 enum: [planner, section, activity, calendar]
  *               format:
  *                 type: string
  *                 enum: [ical, google, outlook]
- *               calendarName:
+ *               plannerId:
  *                 type: string
- *               dateRange:
+ *               sectionIds:
+ *                 type: array
+ *                 items:
+ *                   type: string
+ *               activityIds:
+ *                 type: array
+ *                 items:
+ *                   type: string
+ *               options:
  *                 type: object
- *               includeReminders:
- *                 type: boolean
  *     responses:
  *       200:
  *         description: Calendar file exported successfully
@@ -104,15 +121,14 @@ router.post('/export/pdf',
  *       403:
  *         description: Export limit exceeded
  */
-router.post('/export/calendar',
-    rateLimiter({ windowMs: 60 * 60 * 1000, max: 5 }), // 5 exports per hour
-    validationMiddleware(exportController.exportValidation.exportCalendar),
+router.post('/calendar',
+    validate(exportValidations.createExport),
     exportController.exportCalendar
 );
 
 /**
  * @swagger
- * /export/handwriting:
+ * /handwriting:
  *   post:
  *     summary: Export as handwriting format
  *     tags: [Export]
@@ -125,18 +141,17 @@ router.post('/export/calendar',
  *           schema:
  *             type: object
  *             required:
- *               - data
+ *               - type
+ *               - format
  *             properties:
- *               data:
- *                 type: object
- *               style:
+ *               type:
  *                 type: string
- *                 enum: [cursive, print, mixed]
- *               handwriting:
- *                 type: object
- *               outputFormat:
+ *                 enum: [handwriting]
+ *               format:
  *                 type: string
  *                 enum: [svg, png, pdf]
+ *               options:
+ *                 type: object
  *     responses:
  *       200:
  *         description: Handwriting exported successfully
@@ -148,15 +163,14 @@ router.post('/export/calendar',
  *       403:
  *         description: Export limit exceeded
  */
-router.post('/export/handwriting',
-    rateLimiter({ windowMs: 60 * 60 * 1000, max: 3 }), // 3 exports per hour
-    validationMiddleware(exportController.exportValidation.exportHandwriting),
+router.post('/handwriting',
+    validate(exportValidations.createExport),
     exportController.exportHandwriting
 );
 
 /**
  * @swagger
- * /export/json:
+ * /json:
  *   post:
  *     summary: Export data as JSON
  *     tags: [Export]
@@ -169,14 +183,17 @@ router.post('/export/handwriting',
  *           schema:
  *             type: object
  *             required:
- *               - data
+ *               - type
+ *               - format
  *             properties:
- *               data:
+ *               type:
+ *                 type: string
+ *                 enum: [planner, section, activity, report, summary]
+ *               format:
+ *                 type: string
+ *                 enum: [json]
+ *               options:
  *                 type: object
- *               includeMetadata:
- *                 type: boolean
- *               prettyPrint:
- *                 type: boolean
  *     responses:
  *       200:
  *         description: JSON exported successfully
@@ -185,15 +202,14 @@ router.post('/export/handwriting',
  *             schema:
  *               type: object
  */
-router.post('/export/json',
-    rateLimiter({ windowMs: 60 * 60 * 1000, max: 20 }), // 20 exports per hour
-    validationMiddleware(exportController.exportValidation.exportJson),
+router.post('/json',
+    validate(exportValidations.createExport),
     exportController.exportJson
 );
 
 /**
  * @swagger
- * /export/csv:
+ * /csv:
  *   post:
  *     summary: Export data as CSV
  *     tags: [Export]
@@ -206,14 +222,17 @@ router.post('/export/json',
  *           schema:
  *             type: object
  *             required:
- *               - data
+ *               - type
+ *               - format
  *             properties:
- *               data:
- *                 type: object
- *               delimiter:
+ *               type:
  *                 type: string
- *               includeHeaders:
- *                 type: boolean
+ *                 enum: [planner, section, activity, report, summary]
+ *               format:
+ *                 type: string
+ *                 enum: [csv]
+ *               options:
+ *                 type: object
  *     responses:
  *       200:
  *         description: CSV exported successfully
@@ -224,10 +243,134 @@ router.post('/export/json',
  *       403:
  *         description: Export limit exceeded
  */
-router.post('/export/csv',
-    rateLimiter({ windowMs: 60 * 60 * 1000, max: 15 }), // 15 exports per hour
-    validationMiddleware(exportController.exportValidation.exportCsv),
+router.post('/csv',
+    validate(exportValidations.createExport),
     exportController.exportCsv
+);
+
+/**
+ * @swagger
+ * /exports:
+ *   get:
+ *     summary: Get user exports
+ *     tags: [Export]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: query
+ *         name: status
+ *         schema:
+ *           type: string
+ *           enum: [pending, processing, completed, failed, expired]
+ *       - in: query
+ *         name: limit
+ *         schema:
+ *           type: integer
+ *       - in: query
+ *         name: offset
+ *         schema:
+ *           type: integer
+ *     responses:
+ *       200:
+ *         description: Exports retrieved successfully
+ */
+router.get('/',
+    validate(exportValidations.getUserExports),
+    exportController.getUserExports
+);
+
+/**
+ * @swagger
+ * /exports/:exportId
+ *   get:
+ *     summary: Get export by ID
+ *     tags: [Export]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: exportId
+ *         required: true
+ *         schema:
+ *           type: string
+ *     responses:
+ *       200:
+ *         description: Export retrieved successfully
+ *       404:
+ *         description: Export not found
+ */
+router.get('/:exportId',
+    validate(exportValidations.getExport),
+    exportController.getExport
+);
+
+/**
+ * @swagger
+ * /exports/:exportId/download
+ *   get:
+ *     summary: Download export file
+ *     tags: [Export]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: exportId
+ *         required: true
+ *         schema:
+ *           type: string
+ *     responses:
+ *       200:
+ *         description: File downloaded successfully
+ *         content:
+ *           application/octet-stream:
+ *             schema:
+ *               type: string
+ *               format: binary
+ *       404:
+ *         description: Export file not found
+ */
+router.get('/:exportId/download',
+    validate(exportValidations.downloadExport),
+    exportController.downloadExport
+);
+
+/**
+ * @swagger
+ * /exports/:exportId
+ *   delete:
+ *     summary: Delete export
+ *     tags: [Export]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: exportId
+ *         required: true
+ *         schema:
+ *           type: string
+ *     responses:
+ *       200:
+ *         description: Export deleted successfully
+ */
+router.delete('/:exportId',
+    validate(exportValidations.deleteExport),
+    exportController.deleteExport
+);
+
+/**
+ * @swagger
+ * /quota
+ *   get:
+ *     summary: Get export quota information
+ *     tags: [Export]
+ *     security:
+ *       - bearerAuth: []
+ *     responses:
+ *       200:
+ *         description: Quota information retrieved successfully
+ */
+router.get('/quota',
+    exportController.getExportQuota
 );
 
 export default router;

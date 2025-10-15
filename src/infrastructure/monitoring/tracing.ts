@@ -1,5 +1,5 @@
 /* ===================================================================
- * tracing.service.ts  –  OpenTelemetry 2.1+  (bullmq-safe)
+ * tracing.service.ts  –  OpenTelemetry 2.1  (bullmq-safe)
  * =================================================================== */
 import { NodeTracerProvider } from '@opentelemetry/sdk-trace-node';
 import { resourceFromAttributes } from '@opentelemetry/resources';
@@ -17,6 +17,7 @@ import {
   SpanKind,
   Span,
   Context,
+  propagation,
 } from '@opentelemetry/api';
 import { registerInstrumentations } from '@opentelemetry/instrumentation';
 import { HttpInstrumentation } from '@opentelemetry/instrumentation-http';
@@ -47,10 +48,10 @@ class TracingService {
     const cfg = monitoringConfig.tracing;
 
     const resource = resourceFromAttributes({
-        'service.name': cfg.serviceName,
-        'service.version': cfg.serviceVersion,
-        'deployment.environment': cfg.environment,
-      });
+      'service.name': cfg.serviceName,
+      'service.version': cfg.serviceVersion,
+      'deployment.environment': cfg.environment,
+    });
 
     const processors: SpanProcessor[] = [];
     const exporter = this.createExporter(cfg);
@@ -156,16 +157,26 @@ class TracingService {
         traceFlags: 0,
         isRemote: false,
       }),
-      setAttribute: () => {},
-      setAttributes: () => {},
-      addEvent: () => {},
-      addLink: () => {},
-      setStatus: () => {},
-      updateName: () => {},
-      end: () => {},
+      setAttribute: () => { },
+      setAttributes: () => { },
+      addEvent: () => { },
+      addLink: () => { },
+      setStatus: () => { },
+      updateName: () => { },
+      end: () => { },
       isRecording: () => false,
-      recordException: () => {},
+      recordException: () => { },
     } as unknown as Span;
+  }
+
+  recordException(err: any, span?: Span): void {
+    if (!span) span = trace.getSpan(context.active());
+    if (span) span.recordException(err);
+  }
+
+  injectContextIntoHeaders(headers: Record<string, string>): void {
+    const ctx = context.active();
+    propagation.inject(ctx, headers);
   }
 }
 

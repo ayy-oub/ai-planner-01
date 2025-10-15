@@ -23,7 +23,6 @@ export class SectionService {
         @inject('SectionRepository') private sectionRepository: SectionRepository,
         @inject('PlannerRepository') private plannerRepository: PlannerRepository,
         @inject('ActivityRepository') private activityRepository: ActivityRepository,
-        @inject('CacheService') private cacheService: CacheService,
         @inject('AuditService') private auditService: AuditService
     ) { }
 

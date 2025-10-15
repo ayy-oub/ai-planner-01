@@ -1,9 +1,10 @@
 import { Router } from 'express';
 import { container } from 'tsyringe';
 import { AIController } from './ai.controller';
-import { authMiddleware } from '../auth/auth.middleware';
-import { validationMiddleware } from '../../shared/middleware/validation.middleware';
+import { authenticate } from '../../shared/middleware/auth.middleware';
+import { validate } from '../../shared/middleware/validation.middleware';
 import { rateLimiter } from '../../shared/middleware/rate-limit.middleware';
+import { aiValidations } from './ai.validations';
 
 const router = Router();
 const aiController = container.resolve(AIController);
@@ -15,8 +16,42 @@ const aiController = container.resolve(AIController);
  *   description: AI-powered planning assistance
  */
 
-// All routes require authentication
-router.use(authMiddleware());
+// Apply authentication & global rate limiter to all routes
+router.use(authenticate());
+router.use(rateLimiter);
+
+/**
+ * @swagger
+ * /ai/chat:
+ *   post:
+ *     summary: Interact with AI assistant (chat-based)
+ *     tags: [AI]
+ *     security:
+ *       - bearerAuth: []
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required:
+ *               - message
+ *             properties:
+ *               message:
+ *                 type: string
+ *                 example: "Help me plan my week"
+ *               context:
+ *                 type: object
+ *                 description: Optional planner context or metadata
+ *     responses:
+ *       200:
+ *         description: AI message processed successfully
+ *       400:
+ *         description: Invalid input
+ *       403:
+ *         description: AI access denied
+ */
+router.post('/chat', validate(aiValidations.chat), aiController.chat);
 
 /**
  * @swagger
@@ -49,9 +84,8 @@ router.use(authMiddleware());
  *       403:
  *         description: AI features disabled for user
  */
-router.post('/ai/suggest-tasks',
-    rateLimiter({ windowMs: 60 * 1000, max: 10 }), // 10 requests per minute
-    validationMiddleware(aiController.aiValidation.suggestTasks),
+router.post('/suggest-tasks',
+    validate(aiValidations.suggestTasks),
     aiController.suggestTasks
 );
 
@@ -86,9 +120,8 @@ router.post('/ai/suggest-tasks',
  *       403:
  *         description: AI features disabled for user
  */
-router.post('/ai/optimize-schedule',
-    rateLimiter({ windowMs: 60 * 1000, max: 5 }), // 5 requests per minute
-    validationMiddleware(aiController.aiValidation.optimizeSchedule),
+router.post('/optimize-schedule',
+    validate(aiValidations.optimizeSchedule),
     aiController.optimizeSchedule
 );
 
@@ -119,9 +152,8 @@ router.post('/ai/optimize-schedule',
  *       403:
  *         description: AI features disabled for user
  */
-router.post('/ai/analyze-productivity',
-    rateLimiter({ windowMs: 60 * 1000, max: 3 }), // 3 requests per minute
-    validationMiddleware(aiController.aiValidation.analyzeProductivity),
+router.post('/analyze-productivity',
+    validate(aiValidations.analyzeProductivity),
     aiController.analyzeProductivity
 );
 
@@ -150,8 +182,8 @@ router.post('/ai/analyze-productivity',
  *       403:
  *         description: AI features disabled for user
  */
-router.get('/ai/insights',
-    validationMiddleware(aiController.aiValidation.getInsights),
+router.get('/insights',
+    validate(aiValidations.getInsights),
     aiController.getInsights
 );
 
@@ -185,9 +217,8 @@ router.get('/ai/insights',
  *       403:
  *         description: AI features disabled for user
  */
-router.post('/ai/generate-description',
-    rateLimiter({ windowMs: 60 * 1000, max: 20 }), // 20 requests per minute
-    validationMiddleware(aiController.aiValidation.generateDescription),
+router.post('/generate-description',
+    validate(aiValidations.generateDescription),
     aiController.generateDescription
 );
 
@@ -224,9 +255,8 @@ router.post('/ai/generate-description',
  *       403:
  *         description: AI features disabled for user
  */
-router.post('/ai/predict-duration',
-    rateLimiter({ windowMs: 60 * 1000, max: 15 }), // 15 requests per minute
-    validationMiddleware(aiController.aiValidation.predictDuration),
+router.post('/predict-duration',
+    validate(aiValidations.predictDuration),
     aiController.predictDuration
 );
 

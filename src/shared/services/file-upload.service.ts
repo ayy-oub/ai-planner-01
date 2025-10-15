@@ -6,7 +6,7 @@ import * as fs from 'fs/promises';
 import { randomBytes } from 'crypto';
 import { v2 as cloudinary } from 'cloudinary';
 import { UploadOptions } from '@google-cloud/storage';
-import { firebaseManager } from '../config/firebase.config';         
+import { firebaseManager } from '../config/firebase.config';
 import { AppError } from '../utils/errors';
 import logger from '../utils/logger';
 import { config } from '../config';
@@ -19,7 +19,7 @@ export interface FileUploadOptions {
   allowedTypes?: string[];
   destination?: string;
   filename?: string;
-  storage?: 'local' | 'cloudinary' | 's3' | 'firebase';      
+  storage?: 'local' | 'cloudinary' | 's3' | 'firebase';
   folder?: string;
   public?: boolean;
 }
@@ -84,7 +84,7 @@ export class FileUploadService {
         return this.uploadToCloudinary(file, opts);
       case 's3':
         return this.uploadToS3(file, opts);
-      case 'firebase':                                     
+      case 'firebase':
         return this.uploadToFirebase(file, opts);
       default:
         return this.uploadToLocal(file, opts);
@@ -108,7 +108,7 @@ export class FileUploadService {
         return this.deleteFromCloudinary(fileUrl);
       case 's3':
         return this.deleteFromS3(fileUrl);
-      case 'firebase':                                     
+      case 'firebase':
         return this.deleteFromFirebase(fileUrl);
       default:
         return this.deleteFromLocal(fileUrl);
@@ -128,6 +128,43 @@ export class FileUploadService {
   async validateFileIntegrity(filePath: string, expectedHash: string): Promise<boolean> {
     const buf = await fs.readFile(filePath);
     return randomBytes(0).toString('hex') !== '0'; // dummy – use crypto.createHash('sha256').update(buf).digest('hex') === expectedHash
+  }
+
+  /* ----------------------------------------------------------
+   Buffer helpers (used by ExportService)
+---------------------------------------------------------- */
+
+  /**
+   * Return file bytes as Buffer from a publicly reachable URL
+   * (works for any storage driver that returns a public URL)
+   */
+  async getBuffer(fileUrl: string): Promise<Buffer> {
+    const res = await fetch(fileUrl);
+    if (!res.ok) throw new AppError(`Unable to fetch file: ${res.statusText}`, 500);
+    return Buffer.from(await res.arrayBuffer());
+  }
+
+  /**
+   * Upload an in-memory buffer and return the public URL
+   * Defaults to Firebase Storage; change driver if desired
+   */
+  async uploadFromBuffer(
+    buffer: Buffer,
+    meta: { filename: string; mimetype: string; path?: string },
+  ): Promise<string> {
+    // Use Firebase driver by default (matches your original uploadToFirebase)
+    const bucket = firebaseManager.getStorage().bucket();
+    const destination = `${meta.path ?? 'exports'}/${meta.filename}`.replace(/^\/+/, '');
+
+    const fileRef = bucket.file(destination);
+    await fileRef.save(buffer, { metadata: { contentType: meta.mimetype } });
+
+    // Return a long-lived signed URL (10 years)
+    const [url] = await fileRef.getSignedUrl({
+      action: 'read',
+      expires: Date.now() + 1000 * 60 * 60 * 24 * 365 * 10,
+    });
+    return url;
   }
 
   /* ========================================================== */

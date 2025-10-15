@@ -1,6 +1,7 @@
 import { Timestamp } from 'firebase-admin/firestore';
 import { SectionType, SectionSettings, SectionMetadata } from '../section/section.types';
 import { ActivityType, ActivityStatus, ActivityPriority, ActivityMetadata } from '../activity/activity.types';
+import { AISuggestion } from '../ai/ai.types';
 
 /*  CORE PLANNER DOMAIN  */
 export interface Planner {
@@ -102,18 +103,6 @@ export interface Attachment {
   uploadedBy: string;
 }
 
-export interface AISuggestion {
-  id: string;
-  suggestion: string;
-  type: AISuggestionType;
-  confidence: number;
-  accepted: boolean;
-  createdAt: Date;
-  aiProvider: 'openai' | 'anthropic' | 'gemini';
-}
-
-export type AISuggestionType = 'time_estimate' | 'priority' | 'category' | 'schedule' | 'breakdown' | 'optimize';
-
 
 
 export interface RecurringSettings {
@@ -180,7 +169,7 @@ export interface DuplicatePlannerRequest {
 }
 
 export interface ExportPlannerRequest {
-  format: 'pdf' | 'json' | 'csv' | 'ics';
+  format: 'pdf' | 'csv' | 'json' | 'excel' | 'ical' | 'markdown' | 'html' | 'txt';
   includeSections?: string[];
   includeActivities?: boolean;
   dateRange?: { start: Date; end: Date };
@@ -239,24 +228,6 @@ export interface CollaboratorResponse {
   role: Role;
   addedAt: Date;
   addedBy: string;
-}
-
-/*  AI  */
-export interface AIPlannerSuggestion {
-  type: 'optimize_schedule' | 'suggest_tasks' | 'categorize' | 'prioritize';
-  suggestions: AISuggestionDetail[];
-  confidence: number;
-  reasoning: string;
-}
-
-export interface AISuggestionDetail {
-  id: string;
-  title: string;
-  description: string;
-  action: 'add' | 'modify' | 'delete' | 'reorder';
-  targetId?: string;
-  targetType: 'section' | 'activity';
-  metadata?: any;
 }
 
 /*  REAL-TIME  */

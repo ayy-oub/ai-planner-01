@@ -13,7 +13,7 @@ export type {
     UserSubscription,
     UserStatistics,
     UserSecurity,
-} from '../../modules/auth/auth.types';
+} from '../../modules/user/user.types';
 
 export type {
     PaginationOptions,
