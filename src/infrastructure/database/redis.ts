@@ -1,3 +1,4 @@
+// src/infrastructure/database/redis-connection.ts
 import Redis, { Redis as RedisClient, RedisOptions } from 'ioredis';
 import { config } from '../../shared/config';
 import { logger } from '../../shared/utils/logger';
@@ -6,13 +7,15 @@ import { AppError } from '../../shared/utils/errors';
 class RedisConnection {
     private static instance: RedisConnection;
     private client: RedisClient | null = null;
+    private publisher: RedisClient | null = null;   // ← NEW
+    private subscriber: RedisClient | null = null;  // ← NEW
     private isConnected = false;
     private connectionRetryCount = 0;
     private readonly maxRetries = 5;
-    private readonly retryDelay = 3000; // 3 seconds
+    private readonly retryDelay = 3000;
 
     private constructor() {
-        void this.initializeRedis(); // fire-and-forget async init
+        void this.initializeRedis();
     }
 
     static getInstance(): RedisConnection {
@@ -22,6 +25,9 @@ class RedisConnection {
         return RedisConnection.instance;
     }
 
+    /* ---------------------------------------------------------- */
+    /*  Initialisation – creates THREE clients                    */
+    /* ---------------------------------------------------------- */
     private async initializeRedis(): Promise<void> {
         try {
             const redisOptions: RedisOptions = {
@@ -32,76 +38,78 @@ class RedisConnection {
                 retryStrategy: (times: number) => {
                     if (times > this.maxRetries) {
                         logger.error('Max Redis reconnection attempts reached');
-                        return null; // stop retrying
+                        return null;
                     }
                     return this.retryDelay;
                 },
                 enableReadyCheck: true,
                 maxRetriesPerRequest: 3,
+                enableOfflineQueue: false,
+                connectTimeout: 10000,
+                commandTimeout: 5000,
+                family: 4,
+                keepAlive: 30000,
+                noDelay: true,
+                tls: config.redis.tls ? {} : undefined,
+                lazyConnect: true,          // connect explicitly below
             };
 
+            /* 1. main client */
             this.client = new Redis(redisOptions);
+            /* 2. publisher */
+            this.publisher = this.client.duplicate();
+            /* 3. subscriber */
+            this.subscriber = this.client.duplicate();
 
-            this.setupEventHandlers();
+            /* wire events once */
+            [this.client, this.publisher, this.subscriber].forEach((c) =>
+                this.setupEventHandlers(c),
+            );
 
-            await this.client.connect();
+            /* connect all three */
+            await Promise.all([
+                this.client.connect(),
+                this.publisher.connect(),
+                this.subscriber.connect(),
+            ]);
 
             this.isConnected = true;
             this.connectionRetryCount = 0;
-
-            logger.info('Redis connection established successfully');
+            logger.info('Redis connection established (client + pub + sub)');
         } catch (error: unknown) {
-            logger.error('Failed to initialize Redis:', error);
+            logger.error('Failed to initialise Redis:', error);
             await this.handleConnectionError(error);
         }
     }
 
-    private setupEventHandlers(): void {
-        if (!this.client) return;
-
-        this.client.on('error', (error: unknown) => {
-            logger.error('Redis client error:', error);
-            this.isConnected = false;
-        });
-
-        this.client.on('connect', () => {
+    /* ---------------------------------------------------------- */
+    /*  Event handlers – per-client                               */
+    /* ---------------------------------------------------------- */
+    private setupEventHandlers(client: RedisClient): void {
+        client.on('connect', () => {
             logger.info('Redis client connected');
-            this.isConnected = true;
-            this.connectionRetryCount = 0;
         });
-
-        this.client.on('ready', () => {
+        client.on('ready', () => {
             logger.info('Redis client ready');
             this.isConnected = true;
         });
-
-        this.client.on('reconnecting', () => {
-            logger.info('Redis client reconnecting...');
+        client.on('error', (err) => {
+            logger.error('Redis client error');
+            this.isConnected = false;
+        });
+        client.on('reconnecting', () => {
+            logger.info('Redis client reconnecting');
             this.connectionRetryCount++;
         });
-
-        this.client.on('end', () => {
+        client.on('end', () => {
             logger.warn('Redis connection ended');
             this.isConnected = false;
         });
     }
 
-    private async handleConnectionError(error: unknown): Promise<void> {
-        this.connectionRetryCount++;
-
-        if (this.connectionRetryCount < this.maxRetries) {
-            logger.warn(`Redis connection retry ${this.connectionRetryCount}/${this.maxRetries}`);
-            await this.delay(this.retryDelay);
-            await this.initializeRedis();
-        } else {
-            throw new AppError('Redis connection failed after maximum retries', 500);
-        }
-    }
-
-    private delay(ms: number): Promise<void> {
-        return new Promise(resolve => setTimeout(resolve, ms));
-    }
-
+    /* ---------------------------------------------------------- */
+    /*  Getters – same API as old redisManager                    */
+    /* ---------------------------------------------------------- */
     getClient(): RedisClient {
         if (!this.client || !this.isConnected) {
             throw new AppError('Redis connection not established', 500);
@@ -109,47 +117,72 @@ class RedisConnection {
         return this.client;
     }
 
+    getPublisher(): RedisClient {          // ← NEW
+        if (!this.publisher || !this.isConnected) {
+            throw new AppError('Redis publisher not established', 500);
+        }
+        return this.publisher;
+    }
+
+    getSubscriber(): RedisClient {         // ← NEW
+        if (!this.subscriber || !this.isConnected) {
+            throw new AppError('Redis subscriber not established', 500);
+        }
+        return this.subscriber;
+    }
+
+    /* ---------------------------------------------------------- */
+    /*  Health / disconnect / retry helpers – unchanged           */
+    /* ---------------------------------------------------------- */
     async healthCheck(): Promise<boolean> {
         try {
             if (!this.client || !this.isConnected) return false;
-
             await this.client.ping();
             return true;
-        } catch (error: unknown) {
-            logger.error('Redis health check failed:', error);
+        } catch (err) {
+            logger.error('Redis health-check failed:', err);
             return false;
         }
     }
 
     async disconnect(): Promise<void> {
-        try {
-            if (this.client) {
-                await this.client.quit();
-                this.client = null;
-                this.isConnected = false;
-                logger.info('Redis connection closed');
-            }
-        } catch (error: unknown) {
-            logger.error('Error closing Redis connection:', error);
-            throw new AppError('Failed to close Redis connection', 500);
+        await Promise.all([
+            this.client?.quit(),
+            this.publisher?.quit(),
+            this.subscriber?.quit(),
+        ]);
+        this.isConnected = false;
+        logger.info('Redis disconnected (client + pub + sub)');
+    }
+
+    get connectionStatus(): boolean { return this.isConnected; }
+    get retryCount(): number { return this.connectionRetryCount; }
+
+    /* ---------------------------------------------------------- */
+    /*  Private helpers                                             */
+    /* ---------------------------------------------------------- */
+    private async handleConnectionError(error: unknown): Promise<void> {
+        this.connectionRetryCount++;
+        if (this.connectionRetryCount >= this.maxRetries) {
+            throw new AppError('Redis connection failed after max retries', 500);
         }
-    }
-
-    get connectionStatus(): boolean {
-        return this.isConnected;
-    }
-
-    get retryCount(): number {
-        return this.connectionRetryCount;
+        logger.warn(`Redis retry ${this.connectionRetryCount}/${this.maxRetries}`);
+        await new Promise((res) => setTimeout(res, this.retryDelay));
+        await this.initializeRedis();
     }
 }
 
-// Export singleton instance
+/* ------------------------------------------------------------------ */
+/*  Singleton & convenience exports                                   */
+/* ------------------------------------------------------------------ */
 export const redisConnection = RedisConnection.getInstance();
 
-export async function connectRedis(): Promise<Redis | undefined> {
-    await redisConnection.getClient().connect(); // Or ensure connected
-    return redisConnection.getClient();
-};
+export const getRedisClient = (): RedisClient => redisConnection.getClient();
+export const getRedisPublisher = (): RedisClient => redisConnection.getPublisher();
+export const getRedisSubscriber = (): RedisClient => redisConnection.getSubscriber();
+
+export async function connectRedis(): Promise<RedisClient> {
+    return redisConnection.getClient(); // already connected, but keeps the old signature
+}
 
 export default redisConnection;

@@ -47,8 +47,8 @@ export const emailConfig: EmailConfig = {
         port: config.email.smtp.port,
         secure: config.email.smtp.port === 465,
         auth: {
-            user: config.email.smtp.user,
-            pass: config.email.smtp.pass,
+            user: config.email.smtp.auth.user,
+            pass: config.email.smtp.auth.pass,
         },
         tls: {
             rejectUnauthorized: config.app.env === 'production',

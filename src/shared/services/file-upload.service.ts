@@ -6,10 +6,10 @@ import * as fs from 'fs/promises';
 import { randomBytes } from 'crypto';
 import { v2 as cloudinary } from 'cloudinary';
 import { UploadOptions } from '@google-cloud/storage';
-import { firebaseManager } from '../config/firebase.config';
 import { AppError } from '../utils/errors';
 import logger from '../utils/logger';
 import { config } from '../config';
+import firebaseConnection from '@/infrastructure/database/firebase';
 
 /* ------------------------------------------------------------------ */
 /* Types                                                              */
@@ -153,7 +153,7 @@ export class FileUploadService {
     meta: { filename: string; mimetype: string; path?: string },
   ): Promise<string> {
     // Use Firebase driver by default (matches your original uploadToFirebase)
-    const bucket = firebaseManager.getStorage().bucket();
+    const bucket = firebaseConnection.getStorage().bucket();
     const destination = `${meta.path ?? 'exports'}/${meta.filename}`.replace(/^\/+/, '');
 
     const fileRef = bucket.file(destination);
@@ -243,7 +243,7 @@ export class FileUploadService {
   /* ----------------  Firebase Storage driver  ---------------- */
 
   private readonly uploadToFirebase = async (file: Express.Multer.File, opts: FileUploadOptions): Promise<UploadedFile> => {
-    const bucket = firebaseManager.getStorage().bucket();
+    const bucket = firebaseConnection.getStorage().bucket();
     const filename = opts.filename || this.generateFilename(file.originalname);
     const destination = `${opts.folder || 'uploads'}/${filename}`;
 
@@ -273,7 +273,7 @@ export class FileUploadService {
   };
 
   private readonly deleteFromFirebase = async (url: string): Promise<void> => {
-    const bucket = firebaseManager.getStorage().bucket();
+    const bucket = firebaseConnection.getStorage().bucket();
     const match = url.match(/\/o\/(.+)\?alt=media/);
     const filePath = match ? decodeURIComponent(match[1]) : url.split('/').pop()!;
     await bucket.file(filePath).delete().catch(() => logger.warn(`Firebase file not found for deletion: ${filePath}`));

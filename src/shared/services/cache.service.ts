@@ -3,6 +3,7 @@ import { config } from '../config';
 import { logger } from '../utils/logger';
 import { CacheError } from '../utils/errors';
 import { gzip, ungzip } from 'node-gzip';
+import { injectable } from 'tsyringe';
 
 /**
  * Cache service options
@@ -33,6 +34,7 @@ export interface CacheStats {
 /**
  * Redis-based cache service
  */
+@injectable()
 export class CacheService {
     private redis: Redis;
     private stats = {

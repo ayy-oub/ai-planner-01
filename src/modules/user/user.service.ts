@@ -1,5 +1,10 @@
 import { injectable, inject } from 'tsyringe';
-const { v4: uuidv4 } = require('uuid');
+let uuidv4: () => string;
+
+(async () => {
+  const uuidModule = await import('uuid');
+  uuidv4 = uuidModule.v4;
+})();
 import { UserRepository } from './user.repository';
 import { CacheService } from '../../shared/services/cache.service';
 import { EmailService } from '../../shared/services/email.service';

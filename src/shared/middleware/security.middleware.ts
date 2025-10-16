@@ -89,7 +89,7 @@ export class SecurityMiddleware {
     static speedLimiter = slowDown({
         windowMs: 15 * 60 * 1000, // 15 minutes
         delayAfter: 10, // Allow 10 requests per 15 minutes, then...
-        delayMs: 500, // Add 500ms delay per request
+        delayMs: () => 500, // Add 500ms delay per request
         maxDelayMs: 20000, // Maximum delay of 20 seconds
         skipSuccessfulRequests: false,
         skipFailedRequests: true,
@@ -110,7 +110,7 @@ export class SecurityMiddleware {
     /**
      * Validate API key
      */
-    static validateApiKey = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+    /* static validateApiKey = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
         const apiKey = req.headers['x-api-key'] as string;
 
         if (!apiKey) {
@@ -135,7 +135,7 @@ export class SecurityMiddleware {
         };
 
         next();
-    };
+    }; */
 
     /**
      * Request signature validation
@@ -201,5 +201,5 @@ export const securityMiddleware = async (req: Request, res: Response, next: Next
 
 export const speedLimiter = SecurityMiddleware.speedLimiter;
 export const blockMaliciousIPs = SecurityMiddleware.blockMaliciousIPs;
-export const validateApiKey = SecurityMiddleware.validateApiKey;
+//export const validateApiKey = SecurityMiddleware.validateApiKey;
 export const validateSignature = SecurityMiddleware.validateSignature;

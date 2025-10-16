@@ -1,12 +1,14 @@
+// src/services/firebase/firebaseService.ts
 import * as admin from 'firebase-admin';
 import { UploadOptions, UploadResponse, File, GetSignedUrlConfig, FileMetadata } from '@google-cloud/storage';
 import { config } from '../config';
 import { logger } from '../utils/logger';
 import { AppError } from '../utils/errors';
+import firebaseConnection from '@/infrastructure/database/firebase';
 
-/**
- * Firebase service configuration
- */
+/* ------------------------------------------------------------------ */
+/* Types                                                              */
+/* ------------------------------------------------------------------ */
 export interface FirebaseServiceConfig {
     projectId: string;
     clientEmail: string;
@@ -15,161 +17,34 @@ export interface FirebaseServiceConfig {
     storageBucket: string;
 }
 
-/**
- * Firebase service
- */
+/* ------------------------------------------------------------------ */
+/* Service class (no longer initialises Firebase)                     */
+/* ------------------------------------------------------------------ */
 export class FirebaseService {
     private static instance: FirebaseService;
-    private firestore!: admin.firestore.Firestore;
-    private auth!: admin.auth.Auth;
-    private storage!: admin.storage.Storage;
-    private app!: admin.app.App;
 
-    private initialized = false;
+    /* all refs are obtained from firebaseConnection */
+    private get firestore(): admin.firestore.Firestore { return firebaseConnection.getDatabase(); }
+    private get auth(): admin.auth.Auth { return firebaseConnection.getAuth(); }
+    private get storage(): admin.storage.Storage { return firebaseConnection.getStorage(); }
+    private get app(): admin.app.App { return firebaseConnection['app']!; } // or expose a getter in FirebaseConnection if you want to keep app private
 
-    constructor() {
-        this.initializeApp();
-    }
+    constructor() { /* empty – connection already exists */ }
 
-    /**
-     * Get Firebase service instance
-     */
-    static getInstance(): FirebaseService {
+    public static getInstance(): FirebaseService {
         if (!FirebaseService.instance) {
             FirebaseService.instance = new FirebaseService();
         }
         return FirebaseService.instance;
     }
 
-    get db(): admin.firestore.Firestore {
-        return this.firestore;
-    }
-    
-    get authInstance(): admin.auth.Auth {
-        return this.auth;
-    }
-    
-    get storageInstance(): admin.storage.Storage {
-        return this.storage;
-    }
+    /* ---------------------------------------------------------------- */
+    /* Convenience getters (same names as before)                       */
+    /* ---------------------------------------------------------------- */
+    get db(): admin.firestore.Firestore { return this.firestore; }
+    get authInstance(): admin.auth.Auth { return this.auth; }
+    get storageInstance(): admin.storage.Storage { return this.storage; }
 
-    /**
-     * Initialize Firebase app
-     */
-    private initializeApp(): void {
-        try {
-            if (this.initialized) {
-                return;
-            }
-
-            // Check if app is already initialized
-            if (admin.apps.length > 0) {
-                this.app = admin.apps[0]!;
-                logger.info('Using existing Firebase app');
-            } else {
-                // Initialize new app
-                this.app = admin.initializeApp({
-                    credential: admin.credential.cert({
-                        projectId: config.firebase.projectId,
-                        clientEmail: config.firebase.clientEmail,
-                        privateKey: config.firebase.privateKey.replace(/\\n/g, '\n'),
-                    }),
-                    databaseURL: config.firebase.databaseURL,
-                    storageBucket: config.firebase.storageBucket,
-                });
-
-                logger.info('Firebase app initialized', {
-                    projectId: config.firebase.projectId,
-                });
-            }
-
-            this.firestore = this.app.firestore();
-            this.auth = this.app.auth();
-            this.storage = this.app.storage();
-            this.initialized = true;
-
-            this.setupFirestore();
-            this.setupAuth();
-
-        } catch (error: undefined | any) {
-            logger.error('Failed to initialize Firebase', { error: error.message });
-            throw new AppError(`Failed to initialize Firebase: ${error.message}`, 500, 'FIREBASE_INIT_ERROR');
-        }
-    }
-
-    /**
-     * Setup Firestore configuration
-     */
-    private setupFirestore(): void {
-        try {
-            // Enable offline persistence in development
-            if (config.app.env === 'development' && this.firestore) {
-                // Note: Persistence is enabled by default in Admin SDK
-            }
-
-            // Set timestamps in snapshots
-            this.firestore.settings({
-                timestampsInSnapshots: true,
-                ignoreUndefinedProperties: true,
-            } as any);
-
-            logger.info('Firestore configured');
-        } catch (error: undefined | any) {
-            logger.error('Failed to setup Firestore', { error: error.message });
-        }
-    }
-
-    /**
-     * Setup Auth configuration
-     */
-    private setupAuth(): void {
-        try {
-            // Configure auth settings if needed
-            logger.info('Auth configured');
-        } catch (error: undefined | any) {
-            logger.error('Failed to setup Auth', { error: error.message });
-        }
-    }
-
-    /**
-     * Get Firestore instance
-     */
-    getFirestore(): admin.firestore.Firestore {
-        if (!this.initialized) {
-            throw new AppError('Firebase not initialized', 500, 'FIREBASE_NOT_INITIALIZED');
-        }
-        return this.firestore;
-    }
-
-    /**
-     * Get Auth instance
-     */
-    getAuth(): admin.auth.Auth {
-        if (!this.initialized) {
-            throw new AppError('Firebase not initialized', 500, 'FIREBASE_NOT_INITIALIZED');
-        }
-        return this.auth;
-    }
-
-    /**
-     * Get Storage instance
-     */
-    getStorage(): admin.storage.Storage {
-        if (!this.initialized) {
-            throw new AppError('Firebase not initialized', 500, 'FIREBASE_NOT_INITIALIZED');
-        }
-        return this.storage;
-    }
-
-    /**
-     * Get Firebase app instance
-     */
-    getApp(): admin.app.App {
-        if (!this.initialized) {
-            throw new AppError('Firebase not initialized', 500, 'FIREBASE_NOT_INITIALIZED');
-        }
-        return this.app;
-    }
 
     /**
      * Convert Firestore timestamp to Date
@@ -275,7 +150,7 @@ export class FirebaseService {
      */
     public async checkUserPermission(uid: string, permission: string): Promise<boolean> {
         try {
-            const user = await this.getAuth().getUser(uid);
+            const user = await this.auth.getUser(uid);
             const claims = user.customClaims || {};
             const permissions: string[] = claims.permissions || [];
 

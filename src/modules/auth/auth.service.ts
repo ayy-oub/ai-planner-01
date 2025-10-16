@@ -2,7 +2,12 @@
 import { injectable, inject } from 'tsyringe';
 import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
-const { v4: uuidv4 } = require('uuid');
+let uuidv4: () => string;
+
+(async () => {
+  const uuidModule = await import('uuid');
+  uuidv4 = uuidModule.v4;
+})();
 import { config } from '../../shared/config';
 import { AuthRepository } from './auth.repository';
 import { CacheService } from '../../shared/services/cache.service';

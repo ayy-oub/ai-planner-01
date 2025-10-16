@@ -8,7 +8,7 @@ import { AuthService } from '../../modules/auth/auth.service';
 import { AuthRequest, JwtPayload } from '../../modules/auth/auth.types'; // Adjust paths
 import { logger } from '../utils/logger';
 import { container } from 'tsyringe';
-import { User } from '../../modules/auth/auth.types';
+import { User } from '../../modules/user/user.types';
 
 const cacheService = new CacheService();
 const firebaseService = FirebaseService.getInstance();

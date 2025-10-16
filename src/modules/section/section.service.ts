@@ -1,6 +1,11 @@
 // src/modules/section/section.service.ts
 import { injectable, inject } from 'tsyringe';
-const { v4: uuidv4 } = require('uuid');
+let uuidv4: () => string;
+
+(async () => {
+  const uuidModule = await import('uuid');
+  uuidv4 = uuidModule.v4;
+})();
 import { SectionRepository } from './section.repository';
 import { PlannerRepository } from '../planner/planner.repository';
 import { ActivityRepository } from '../activity/activity.repository';

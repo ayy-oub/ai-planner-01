@@ -51,6 +51,13 @@ class FirebaseConnection {
         }
     }
 
+    public getApp(): admin.app.App {
+        if (!this.app) {
+            throw new Error('Firebase Admin not initialized');
+        }
+        return this.app;
+    }
+
     getDatabase(): admin.firestore.Firestore {
         if (!this.db || !this.isConnected) {
             throw new AppError('Firebase connection not established', 500);

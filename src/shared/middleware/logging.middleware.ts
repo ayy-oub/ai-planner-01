@@ -1,6 +1,11 @@
 import { Request, Response, NextFunction } from 'express';
 import { logger } from '../utils/logger';
-const { v4: uuidv4 } = require('uuid');
+let uuidv4: () => string;
+
+(async () => {
+  const uuidModule = await import('uuid');
+  uuidv4 = uuidModule.v4;
+})();
 
 /**
  * Request logging middleware

@@ -2,7 +2,12 @@
 /*  ai.service.ts  –  OpenAI-powered implementation                   */
 /* ------------------------------------------------------------------ */
 import { Injectable } from '@nestjs/common';
-const { v4: uuidv4 } = require('uuid');
+let uuidv4: () => string;
+
+(async () => {
+  const uuidModule = await import('uuid');
+  uuidv4 = uuidModule.v4;
+})();
 import { Timestamp } from 'firebase-admin/firestore';
 
 /* ---------- internal ---------- */

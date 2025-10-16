@@ -1,3 +1,5 @@
+import 'reflect-metadata';
+import '@/shared/container';
 import 'dotenv/config';
 import 'module-alias/register';
 import cluster from 'cluster';
@@ -10,6 +12,7 @@ import { healthCheck } from '../src/infrastructure/monitoring/health-check';
 import { connectDatabase } from '../src/infrastructure/database/firebase';
 import { connectRedis } from '../src/infrastructure/database/redis';
 import { setupGracefulShutdown } from '../src/shared/utils/graceful-shutdown';
+import '@/shared/xss-clean';
 
 const numCPUs = os.cpus().length;
 const PORT = config.app.port;

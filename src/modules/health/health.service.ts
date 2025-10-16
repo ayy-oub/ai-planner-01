@@ -19,7 +19,12 @@ import {
 } from './health.types';
 import { FirebaseService } from '../../shared/services/firebase.service';
 import { logger } from '../../shared/utils/logger';
-const { v4: uuidv4 } = require('uuid');
+let uuidv4: () => string;
+
+(async () => {
+  const uuidModule = await import('uuid');
+  uuidv4 = uuidModule.v4;
+})();
 import { subDays, addMinutes } from 'date-fns';
 import * as os from 'os';
 import * as process from 'process';

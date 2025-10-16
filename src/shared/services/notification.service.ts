@@ -2,10 +2,10 @@
 import { injectable, inject } from 'inversify';
 import {emailService, EmailService } from './email.service';
 import {cacheService, CacheService } from './cache.service';
-import { firebaseManager } from '../config/firebase.config';   // <-- added
 import { getMessaging, Messaging, MulticastMessage } from 'firebase-admin/messaging';
 import logger from '../utils/logger';
 import { AppError } from '../utils/errors';
+import firebaseConnection from '@/infrastructure/database/firebase';
 
 /* ------------------------------------------------------------------ */
 /* Types                                                              */
@@ -46,7 +46,7 @@ export class NotificationService {
     @inject(EmailService) private emailService: EmailService,
     @inject(CacheService) private cacheService: CacheService
   ) {
-    this.messaging = getMessaging(firebaseManager.getApp());
+    this.messaging = getMessaging(firebaseConnection.getApp());
   }
 
   /* ========================================================== */
@@ -212,7 +212,7 @@ export class NotificationService {
   /* Token CRUD  (Firestore)                                   */
   /* ========================================================== */
   private async getPushTokens(userId: string): Promise<string[]> {
-    const snap = await firebaseManager.getFirestore()
+    const snap = await firebaseConnection.getDatabase()
       .collection('user_push_tokens')
       .where('userId', '==', userId)
       .get();
@@ -221,7 +221,7 @@ export class NotificationService {
 
   private async removePushToken(token: string): Promise<void> {
     const hash = this.hash(token);
-    await firebaseManager.getFirestore()
+    await firebaseConnection.getDatabase()
       .collection('user_push_tokens')
       .doc(hash)
       .delete();
