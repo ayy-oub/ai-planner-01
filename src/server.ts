@@ -10,7 +10,7 @@ import { config } from '../src/shared/config';
 import { logger } from '../src/shared/utils/logger';
 import { healthCheck } from '../src/infrastructure/monitoring/health-check';
 import { connectDatabase } from '../src/infrastructure/database/firebase';
-import { connectRedis } from '../src/infrastructure/database/redis';
+//import { connectRedis } from '../src/infrastructure/database/redis';
 import { setupGracefulShutdown } from '../src/shared/utils/graceful-shutdown';
 import '@/shared/xss-clean';
 
@@ -21,7 +21,7 @@ async function startServer() {
     try {
         // Connect to databases
         await connectDatabase();
-        const redisClient = await connectRedis();
+        //const redisClient = await connectRedis();
 
         const server = app.listen(PORT, () => {
             logger.info(`🚀 Server running on port ${PORT} in ${config.app.env} mode`);
@@ -34,7 +34,7 @@ async function startServer() {
             }
         });
 
-        const shutdownManager = setupGracefulShutdown(server, redisClient);
+        //const shutdownManager = setupGracefulShutdown(server, redisClient);
 
         // Graceful shutdown
         createTerminus(server, {
@@ -46,7 +46,7 @@ async function startServer() {
             },
             onSignal: async () => {
                 logger.info('Server is starting cleanup');
-                await shutdownManager.shutdown('SIGINT');
+                //await shutdownManager.shutdown('SIGINT');
             },
             onShutdown: async () => {
                 logger.info('Cleanup finished, server is shutting down');

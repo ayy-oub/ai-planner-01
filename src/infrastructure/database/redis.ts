@@ -15,7 +15,11 @@ class RedisConnection {
     private readonly retryDelay = 3000;
 
     private constructor() {
-        void this.initializeRedis();
+        this.initializeRedis().catch(e => {
+            logger.error('Redis initialisation failed on start-up', e);
+            console.error(e);          // make sure it appears even if logger is mis-configured
+            process.exit(1);           // fail fast
+        });
     }
 
     static getInstance(): RedisConnection {
@@ -161,14 +165,22 @@ class RedisConnection {
     /* ---------------------------------------------------------- */
     /*  Private helpers                                             */
     /* ---------------------------------------------------------- */
+
+    private delay(ms: number): Promise<void> {
+        return new Promise(res => setTimeout(res, ms));
+    }
+
     private async handleConnectionError(error: unknown): Promise<void> {
         this.connectionRetryCount++;
         if (this.connectionRetryCount >= this.maxRetries) {
-            throw new AppError('Redis connection failed after max retries', 500);
+            throw new AppError(
+                `Redis connection failed after ${this.maxRetries} attempts`,
+                500
+            );
         }
         logger.warn(`Redis retry ${this.connectionRetryCount}/${this.maxRetries}`);
-        await new Promise((res) => setTimeout(res, this.retryDelay));
-        await this.initializeRedis();
+        await this.delay(this.retryDelay);
+        // allow the next await initializeRedis() to be called again
     }
 }
 

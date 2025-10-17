@@ -3,7 +3,8 @@ import { config } from '../config';
 import { logger } from '../utils/logger';
 import { CacheError } from '../utils/errors';
 import { gzip, ungzip } from 'node-gzip';
-import { injectable } from 'tsyringe';
+import { inject, injectable } from 'tsyringe';
+import { getRedisClient } from '@/infrastructure/database/redis';
 
 /**
  * Cache service options
@@ -46,28 +47,10 @@ export class CacheService {
     };
     private compressionThreshold = 1024; // 1KB
 
-    constructor(redis?: Redis) {
-        this.redis = redis || new Redis({
-            host: config.redis.host,
-            port: config.redis.port,
-            password: config.redis.password,
-            db: config.redis.db,
-            maxRetriesPerRequest: 3,
-            enableOfflineQueue: false,
-            connectTimeout: 10000,
-            commandTimeout: 5000,
-            family: 4,
-            keepAlive: 30000,
-            noDelay: true,
-            tls: config.redis.tls ? {} : undefined,
-            retryStrategy(times) {
-                // delay reconnect by 100ms * number of attempts
-                return Math.min(times * 100, 2000);
-            }
-        });
-
+    constructor(@inject('RedisClient') redis?: Redis) {
+        this.redis = redis || getRedisClient(); // shared singleton
         this.setupEventHandlers();
-    }
+      }
 
     getClient(): Redis {
         return this.redis;
