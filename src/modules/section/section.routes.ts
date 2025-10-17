@@ -1,14 +1,14 @@
 // src/modules/section/section.routes.ts
 import { Router } from 'express';
-import { container } from 'tsyringe';
-import { SectionController } from './section.controller';
+;
 import { authenticate } from '../../shared/middleware/auth.middleware';
 import { validate } from '../../shared/middleware/validation.middleware';
 import { rateLimiter } from '../../shared/middleware/rate-limit.middleware';
 import { sectionValidations } from './section.validations';
+import { sectionController as sectionControll } from '@/shared/container';
 
 const router = Router();
-const sectionController = container.resolve(SectionController);
+const sectionController = sectionControll;
 
 /**
  * @swagger
@@ -22,7 +22,7 @@ router.use(authenticate());
 router.use(rateLimiter);
 
 /* ==========================================================
-   CRUD
+    CRUD
    ========================================================== */
 
 /**

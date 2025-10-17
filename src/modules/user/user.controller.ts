@@ -1,5 +1,4 @@
 import { Response, NextFunction } from 'express';
-import { injectable, inject } from 'tsyringe';
 import { UserService } from './user.service';
 import { asyncHandler } from '../../shared/utils/async-handler';
 import { ApiResponse } from '../../shared/utils/api-response';
@@ -7,12 +6,11 @@ import { AuthRequest } from '../../modules/auth/auth.types';
 import { logger } from '../../shared/utils/logger';
 import { AppError, ErrorCode } from '@/shared/utils/errors';
 
-@injectable()
 export class UserController {
-    constructor(@inject('UserService') private readonly userService: UserService) { }
+    constructor(private readonly userService: UserService) { }
 
     /* =========================================================
-       Profile
+        Profile
     ========================================================= */
     getProfile = asyncHandler(async (req: AuthRequest, res: Response, next: NextFunction) => {
         try {

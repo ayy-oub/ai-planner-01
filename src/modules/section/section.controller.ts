@@ -1,18 +1,16 @@
 // src/modules/section/section.controller.ts
 import { Response, NextFunction } from 'express';
-import { injectable, inject } from 'tsyringe';
 import { SectionService } from './section.service';
 import { asyncHandler } from '../../shared/utils/async-handler';
 import { ApiResponse } from '../../shared/utils/api-response';
 import { AuthRequest } from '../auth/auth.types';
 import { logger } from '../../shared/utils/logger';
 
-@injectable()
 export class SectionController {
-  constructor(@inject('SectionService') private readonly sectionService: SectionService) {}
+  constructor(private readonly sectionService: SectionService) {}
 
   /* =========================================================
-     CRUD
+    CRUD
   ========================================================= */
   createSection = asyncHandler(async (req: AuthRequest, res: Response, next: NextFunction) => {
     try {

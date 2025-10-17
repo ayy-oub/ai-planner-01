@@ -1,4 +1,3 @@
-import { injectable } from 'tsyringe';
 import { Timestamp } from 'firebase-admin/firestore';
 import { AppError, ErrorCode } from '../../shared/utils/errors';
 import { logger } from '../../shared/utils/logger';
@@ -15,7 +14,6 @@ import {
 
 const firestore = firebaseConnection.getDatabase();
 
-@injectable()
 export class UserRepository {
     private readonly userColl = firestore.collection('users');
     private readonly notifColl = firestore.collection('notifications');

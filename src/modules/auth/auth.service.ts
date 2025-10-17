@@ -1,5 +1,4 @@
 // src/modules/auth/auth.service.ts
-import { injectable, inject } from 'tsyringe';
 import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
 let uuidv4: () => string;
@@ -40,14 +39,13 @@ import {
 } from '../../shared/utils/errors';
 import { logger } from '../../shared/utils/logger';
 
-@injectable()
 export class AuthService {
   constructor(
-    @inject('AuthRepository') private authRepository: AuthRepository,
-    @inject('CacheService') private cacheService: CacheService,
-    @inject('EmailService') private emailService: EmailService,
-    @inject('AuditService') private auditService: AuditService,
-    @inject('QueueService') private queueService: QueueService
+    private authRepository: AuthRepository,
+    private cacheService: CacheService,
+    private emailService: EmailService,
+    private auditService: AuditService,
+    private queueService: QueueService
   ) { }
 
   /* ------------------------------------------------------------------ */

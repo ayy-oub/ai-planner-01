@@ -4,30 +4,27 @@ import 'module-alias/register';
 import cluster from 'cluster';
 import os from 'os';
 import { createTerminus } from '@godaddy/terminus';
-import app from './app';
 import { config } from '../src/shared/config';
 import { logger } from '../src/shared/utils/logger';
 import { healthCheck } from '../src/infrastructure/monitoring/health-check';
 import { connectDatabase } from '../src/infrastructure/database/firebase';
 import { setupGracefulShutdown } from '../src/shared/utils/graceful-shutdown';
-// Removed: import '@/shared/container';
-import '@/shared/xss-clean';
-import { registerDependencies } from '@/shared/container';
+//import './types/xss-clean';
+import { connectRedis } from './infrastructure/database/redis';
+import createApp from './app';
 
 const numCPUs = os.cpus().length;
 const PORT = config.app.port;
 
 async function startServer() {
     try {
-        // Register dependencies first!
-        await registerDependencies();
 
         // Connect to other databases
         await connectDatabase();
 
-        // Now it's safe to resolve anything from the container
-        // (No need to connect Redis here separately if container manages it)
-        // But if you want to keep connectRedis here, be consistent
+        const redisClient = await connectRedis();
+
+        const app = createApp();
 
         const server = app.listen(PORT, () => {
             logger.info(`🚀 Server running on port ${PORT} in ${config.app.env} mode`);
@@ -40,12 +37,7 @@ async function startServer() {
             }
         });
 
-        // Setup graceful shutdown with Redis client from container
-        // Resolve redisClient from container if needed
-        // const redisClient = container.resolve<Redis>('RedisClient');
-        // or pass redisClient to shutdownManager if you want
-        
-        const shutdownManager = setupGracefulShutdown(server /*, redisClient */);
+        const shutdownManager = setupGracefulShutdown(server, redisClient);
 
         createTerminus(server, {
             signal: 'SIGINT',

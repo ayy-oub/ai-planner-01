@@ -1,5 +1,5 @@
 // src/modules/health/health.service.ts
-import { Injectable, Logger, OnModuleDestroy } from '@nestjs/common';
+import { OnModuleDestroy } from '@nestjs/common';
 import { HealthRepository } from './health.repository';
 import { CacheService } from '../../shared/services/cache.service';
 import {
@@ -22,14 +22,13 @@ import { logger } from '../../shared/utils/logger';
 let uuidv4: () => string;
 
 (async () => {
-  const uuidModule = await import('uuid');
-  uuidv4 = uuidModule.v4;
+    const uuidModule = await import('uuid');
+    uuidv4 = uuidModule.v4;
 })();
 import { subDays, addMinutes } from 'date-fns';
 import * as os from 'os';
 import * as process from 'process';
 
-@Injectable()
 export class HealthService implements OnModuleDestroy {
 
     private readonly healthThresholds: HealthThresholds = {
@@ -125,7 +124,7 @@ export class HealthService implements OnModuleDestroy {
     async getReadiness(): Promise<{ ready: boolean; timestamp: Date }> {
         // simplest: if we can reach DB & Cache we are ready
         const [db, cache] = await Promise.allSettled([
-            this.firebaseService.getFirestore().collection('health').limit(1).get(),
+            this.firebaseService.db.collection('health').limit(1).get(),
             this.cacheService.ping(),
         ]);
         return {
@@ -334,7 +333,7 @@ export class HealthService implements OnModuleDestroy {
         this.registerHealthCheck('database', async () => {
             const start = Date.now();
             try {
-                const db = this.firebaseService.getFirestore();
+                const db = this.firebaseService.db;
                 const doc = db.collection('health').doc('test');
                 await doc.set({ ts: new Date() });
                 const snap = await doc.get();
@@ -421,7 +420,7 @@ export class HealthService implements OnModuleDestroy {
         /* ---------- external-services ---------- */
         this.registerHealthCheck('external-services', async () => {
             const svcs = [
-                { name: 'firebase', check: async () => this.firebaseService.getFirestore().collection('health').limit(1).get() },
+                { name: 'firebase', check: async () => this.firebaseService.db.collection('health').limit(1).get() },
                 { name: 'redis', check: async () => this.cacheService.ping() },
             ];
             const res = await Promise.allSettled(svcs.map((s) => s.check()));
@@ -478,7 +477,7 @@ export class HealthService implements OnModuleDestroy {
     private async checkDatabaseHealth(): Promise<DatabaseHealth> {
         try {
             const start = Date.now();
-            await this.firebaseService.getFirestore().collection('health').limit(1).get();
+            await this.firebaseService.db.collection('health').limit(1).get();
             const rt = Date.now() - start;
             return {
                 connected: true,

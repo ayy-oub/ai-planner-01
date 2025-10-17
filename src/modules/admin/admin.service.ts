@@ -1,4 +1,3 @@
-import { injectable, inject } from 'tsyringe';
 import { AdminRepository } from './admin.repository';
 import {
     AdminUser,
@@ -15,12 +14,11 @@ import { AppError, ErrorCode } from '../../shared/utils/errors';
 import { logger } from '../../shared/utils/logger';
 import { Timestamp } from 'firebase-admin/firestore';
 
-@injectable()
 export class AdminService {
     constructor(
-        @inject('AdminRepository') private readonly adminRepo: AdminRepository,
-        @inject('CacheService') private readonly cache: CacheService,
-        @inject('EmailService') private readonly email: EmailService
+        private readonly adminRepo: AdminRepository,
+        private readonly cache: CacheService,
+        private readonly email: EmailService
     ) { }
 
     /* =========================================================

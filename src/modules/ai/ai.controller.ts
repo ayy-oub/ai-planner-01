@@ -1,5 +1,4 @@
 import { Request, Response, NextFunction } from 'express';
-import { injectable, inject } from 'tsyringe';
 import { AIService } from './ai.service';
 import { asyncHandler } from '../../shared/utils/async-handler';
 import { ApiResponse } from '../../shared/utils/api-response';
@@ -12,10 +11,9 @@ import { AuthRequest } from '../../modules/auth/auth.types';
  *   name: AI
  *   description: AI-powered planning assistance
  */
-@injectable()
 export class AIController {
     constructor(
-        @inject(AIService) private readonly aiService: AIService
+        private readonly aiService: AIService
     ) { }
 
     /**

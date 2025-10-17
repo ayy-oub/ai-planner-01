@@ -1,6 +1,5 @@
 import { BaseApiClient } from './api-client';
 import { axiosConfig } from './axios-config';
-import { circuitBreakers } from '../../shared/middleware/circuit-breaker.middleware';
 
 // Map each service to its circuit breaker key
 const serviceCircuitMap = {

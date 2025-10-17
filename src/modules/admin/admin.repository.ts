@@ -1,4 +1,3 @@
-import { injectable } from 'tsyringe';
 import { AppError, ErrorCode } from '../../shared/utils/errors';
 import { logger } from '../../shared/utils/logger';
 import firebaseConnection from '../../infrastructure/database/firebase';
@@ -17,7 +16,6 @@ import { UserRole } from '../user/user.types';
 
 const firestore = firebaseConnection.getDatabase();
 
-@injectable()
 export class AdminRepository {
     private readonly userColl = firestore.collection('users');
     private readonly configDoc = firestore.collection('system_config').doc('main');

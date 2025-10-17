@@ -4,7 +4,6 @@ import { AppError, ErrorCode } from '../../shared/utils/errors';
 import { logger } from '../../shared/utils/logger';
 import firebaseConnection from '../../infrastructure/database/firebase';
 import { FirebaseService } from '../../shared/services/firebase.service';
-import { injectable, inject } from 'tsyringe';
 
 const firestore = firebaseConnection.getDatabase();
 
@@ -17,12 +16,11 @@ function deepMerge(target: any, source: any): any {
   return { ...target, ...source };
 }
 
-@injectable()
 export class AuthRepository {
   private collection = firestore.collection('users');
 
   constructor(
-    @inject('FirebaseService') private firebaseService: FirebaseService
+    private firebaseService: FirebaseService
   ) {}
 
   /* ------------------------------------------------------------------ */

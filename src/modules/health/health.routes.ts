@@ -1,14 +1,14 @@
 // src/modules/health/health.routes.ts
 import { Router } from 'express';
-import { container } from 'tsyringe';
-import { HealthController } from './health.controller';
+;
 import { asyncHandler } from '../../shared/utils/async-handler';
 import { authenticate, requireRoles } from '@/shared/middleware/auth.middleware';
 import healthValidations from './health.validations';
 import { validate } from '@/shared/middleware/validation.middleware';
+import { healthController as healthControll} from '@/shared/container';
 
 const router = Router();
-const healthController = container.resolve(HealthController);
+const healthController = healthControll;
 
 /**
  * @swagger

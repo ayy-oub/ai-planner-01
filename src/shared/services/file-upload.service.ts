@@ -1,5 +1,4 @@
 // src/shared/services/file-upload.service.ts
-import { injectable } from 'inversify';
 import multer from 'multer';
 import * as path from 'path';
 import * as fs from 'fs/promises';
@@ -45,7 +44,6 @@ export interface FileUploadResult {
 /* ------------------------------------------------------------------ */
 /* Service                                                            */
 /* ------------------------------------------------------------------ */
-@injectable()
 export class FileUploadService {
   private readonly uploadDir: string;
   private readonly maxFileSize: number;

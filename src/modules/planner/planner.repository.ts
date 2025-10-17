@@ -1,5 +1,4 @@
 // src/modules/planner/planner.repository.ts
-import { injectable } from 'tsyringe';
 import { Timestamp } from 'firebase-admin/firestore';
 import { AppError, ErrorCode } from '../../shared/utils/errors';
 import { logger } from '../../shared/utils/logger';
@@ -17,7 +16,6 @@ import {
 
 const firestore = firebaseConnection.getDatabase();
 
-@injectable()
 export class PlannerRepository {
     private readonly plannerColl = firestore.collection('planners');
     private readonly sectionColl = firestore.collection('sections');

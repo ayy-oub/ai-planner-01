@@ -6,7 +6,7 @@ import { getMessaging, Messaging, MulticastMessage } from 'firebase-admin/messag
 import logger from '../utils/logger';
 import { AppError } from '../utils/errors';
 import firebaseConnection from '@/infrastructure/database/firebase';
-import { container } from 'tsyringe';
+;
 
 /* ------------------------------------------------------------------ */
 /* Types                                                              */

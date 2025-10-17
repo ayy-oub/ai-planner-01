@@ -1,5 +1,4 @@
 // src/modules/activity/activity.service.ts
-import { injectable, inject } from 'tsyringe';
 import { AppError, ErrorCode } from '../../shared/utils/errors';
 import { ActivityRepository } from './activity.repository';
 import {
@@ -10,12 +9,11 @@ import {
 } from './activity.types';
 import { logger } from '../../shared/utils/logger';
 
-@injectable()
 export class ActivityService {
-  constructor(@inject(ActivityRepository) private readonly repo: ActivityRepository) {}
+  constructor(private readonly repo: ActivityRepository) {}
 
   /* =========================================================
-     CRUD
+    CRUD
   ========================================================= */
 
   async createActivity(sectionId: string, userId: string, data: Partial<Activity>): Promise<Activity> {

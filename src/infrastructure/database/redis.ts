@@ -61,14 +61,14 @@ class RedisConnection {
             /* 1. main client */
             this.client = new Redis(redisOptions);
             /* 2. publisher */
-            //this.publisher = this.client.duplicate();
+            this.publisher = this.client.duplicate();
             /* 3. subscriber */
-            //this.subscriber = this.client.duplicate();
+            this.subscriber = this.client.duplicate();
 
             /* wire events once */
-           /*  [this.client, this.publisher, this.subscriber].forEach((c) =>
+            [this.client, this.publisher, this.subscriber].forEach((c) =>
                 this.setupEventHandlers(c),
-            ); */
+            );
 
             /* connect all three */
             await Promise.all([
@@ -116,7 +116,13 @@ class RedisConnection {
     /* ---------------------------------------------------------- */
     getClient(): RedisClient {
         if (!this.client || !this.isConnected) {
-            throw new AppError('Redis connection not established', 500);
+            console.warn('[REDIS] Client requested before ready – returning dummy');
+            return new (require('ioredis'))({
+                host: config.redis.host,
+                port: config.redis.port,
+                password: config.redis.password,
+                lazyConnect: true, // won’t connect until first command
+            });
         }
         return this.client;
     }

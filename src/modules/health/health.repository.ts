@@ -1,5 +1,5 @@
 // src/modules/health/health.repository.ts
-import { Injectable, Logger } from '@nestjs/common';
+import { Logger } from '@nestjs/common';
 import { CacheService } from '../../shared/services/cache.service';
 import { FirebaseService } from '../../shared/services/firebase.service';
 import {
@@ -8,7 +8,6 @@ import {
     HealthReport,
 } from './health.types';
 
-@Injectable()
 export class HealthRepository {
     private readonly logger = new Logger(HealthRepository.name);
 
@@ -18,7 +17,7 @@ export class HealthRepository {
     ) { }
 
     private get db() {
-        return this.firebaseService.getFirestore();
+        return this.firebaseService.db;
     }
 
     /**

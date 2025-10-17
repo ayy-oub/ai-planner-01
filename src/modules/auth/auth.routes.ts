@@ -1,7 +1,6 @@
 import { Router } from 'express';
-import { container } from 'tsyringe';
 import { AuthController } from './auth.controller';
-import { authMiddleware } from '../../shared/middleware/auth.middleware';
+import {authenticate, logActivity } from '../../shared/middleware/auth.middleware';
 import { validate } from '../../shared/middleware/validation.middleware';
 import {
   registerValidation,
@@ -15,11 +14,13 @@ import {
 } from './auth.validation';
 import { asyncHandler } from '../../shared/utils/async-handler';
 import { authRateLimiter } from '@/shared/middleware/rate-limit.middleware';
+import { authService } from '@/shared/container';
 
 const router = Router();
-const authController = container.resolve(AuthController);
 
-//router.use(authRateLimiter)
+const authController = new AuthController(authService);
+
+router.use(authRateLimiter)
 
 /**
  * @swagger
@@ -137,7 +138,7 @@ router.post('/refresh', validate(refreshTokenValidation), asyncHandler(authContr
  *       200:
  *         description: Logout successful
  */
-router.post('/logout', authMiddleware.authenticate, authMiddleware.logActivity('USER_LOGOUT'), asyncHandler(authController.logout));
+router.post('/logout', authenticate, logActivity('USER_LOGOUT'), asyncHandler(authController.logout));
 
 /**
  * @swagger
@@ -153,7 +154,7 @@ router.post('/logout', authMiddleware.authenticate, authMiddleware.logActivity('
  *       401:
  *         description: Unauthorized
  */
-router.get('/me', authMiddleware.authenticate, asyncHandler(authController.getProfile));
+router.get('/me', authenticate, asyncHandler(authController.getProfile));
 
 /**
  * @swagger
@@ -180,7 +181,7 @@ router.get('/me', authMiddleware.authenticate, asyncHandler(authController.getPr
  *       200:
  *         description: Profile updated successfully
  */
-router.patch('/update-profile', authMiddleware.authenticate, validate(updateProfileValidation), authMiddleware.logActivity('PROFILE_UPDATED'), asyncHandler(authController.updateProfile));
+router.patch('/update-profile', authenticate, validate(updateProfileValidation), logActivity('PROFILE_UPDATED'), asyncHandler(authController.updateProfile));
 
 /**
  * @swagger
@@ -211,7 +212,7 @@ router.patch('/update-profile', authMiddleware.authenticate, validate(updateProf
  *       400:
  *         description: Invalid current password
  */
-router.post('/change-password', authMiddleware.authenticate, validate(changePasswordValidation), authMiddleware.logActivity('PASSWORD_CHANGED'), asyncHandler(authController.changePassword));
+router.post('/change-password', authenticate, validate(changePasswordValidation), logActivity('PASSWORD_CHANGED'), asyncHandler(authController.changePassword));
 
 /**
  * @swagger
@@ -305,7 +306,7 @@ router.post('/verify-email', validate(verifyEmailValidation), asyncHandler(authC
  *       200:
  *         description: Verification email sent
  */
-router.post('/resend-verification', authMiddleware.authenticate, asyncHandler(authController.resendVerificationEmail));
+router.post('/resend-verification', authenticate, asyncHandler(authController.resendVerificationEmail));
 
 /**
  * @swagger
@@ -319,7 +320,7 @@ router.post('/resend-verification', authMiddleware.authenticate, asyncHandler(au
  *       200:
  *         description: Active sessions retrieved
  */
-router.get('/sessions', authMiddleware.authenticate, asyncHandler(authController.getSessions));
+router.get('/sessions', authenticate, asyncHandler(authController.getSessions));
 
 /**
  * @swagger
@@ -339,7 +340,7 @@ router.get('/sessions', authMiddleware.authenticate, asyncHandler(authController
  *       200:
  *         description: Session terminated
  */
-router.delete('/sessions/:sessionId', authMiddleware.authenticate, asyncHandler(authController.terminateSession));
+router.delete('/sessions/:sessionId', authenticate, asyncHandler(authController.terminateSession));
 
 /**
  * @swagger
@@ -353,6 +354,6 @@ router.delete('/sessions/:sessionId', authMiddleware.authenticate, asyncHandler(
  *       200:
  *         description: Other sessions terminated
  */
-router.post('/sessions/terminate-all', authMiddleware.authenticate, asyncHandler(authController.terminateAllOtherSessions));
+router.post('/sessions/terminate-all', authenticate, asyncHandler(authController.terminateAllOtherSessions));
 
 export default router;

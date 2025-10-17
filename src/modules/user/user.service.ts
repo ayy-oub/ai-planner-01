@@ -1,9 +1,8 @@
-import { injectable, inject } from 'tsyringe';
 let uuidv4: () => string;
 
 (async () => {
-  const uuidModule = await import('uuid');
-  uuidv4 = uuidModule.v4;
+    const uuidModule = await import('uuid');
+    uuidv4 = uuidModule.v4;
 })();
 import { UserRepository } from './user.repository';
 import { CacheService } from '../../shared/services/cache.service';
@@ -21,13 +20,12 @@ import {
     SessionRecord,
 } from './user.types';
 
-@injectable()
 export class UserService {
     constructor(
-        @inject('UserRepository') private readonly userRepo: UserRepository,
-        @inject('CacheService') private readonly cache: CacheService,
-        @inject('EmailService') private readonly email: EmailService,
-        @inject('FirebaseService') private readonly firebase: FirebaseService
+        private readonly userRepo: UserRepository,
+        private readonly cache: CacheService,
+        private readonly email: EmailService,
+        private readonly firebase: FirebaseService
     ) { }
 
     /* =========================================================
@@ -307,10 +305,10 @@ export class UserService {
         if (!user) {
             throw new AppError('User not found', 404, undefined, ErrorCode.USER_NOT_FOUND);
         }
-    
+
         // Delete the account
         await this.userRepo.deleteAccount(userId);
-    
+
         // Send the account deleted email
         if (user.email && user.displayName) {
             await this.email.sendAccountDeletedEmail(user.email, user.displayName);
@@ -318,9 +316,9 @@ export class UserService {
             // fallback if name is missing
             await this.email.sendAccountDeletedEmail(user.email, 'Client');
         }
-    
+
         // Clear cache
         await this.cache.delete(`user:profile:${userId}`);
     }
-    
+
 }

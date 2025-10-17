@@ -1,6 +1,5 @@
 // src/modules/export/export.controller.ts
 import { Response, NextFunction } from 'express';
-import { injectable, inject } from 'tsyringe';
 import { ExportService } from './export.service';
 import { asyncHandler } from '../../shared/utils/async-handler';
 import { ApiResponse } from '../../shared/utils/api-response';
@@ -9,12 +8,11 @@ import { logger } from '../../shared/utils/logger';
 import { ErrorCode } from '../../shared/utils/errors';
 import { ExportStatus } from './export.types';
 
-@injectable()
 export class ExportController {
-    constructor(@inject('ExportService') private readonly exportService: ExportService) {}
+    constructor(private readonly exportService: ExportService) {}
 
     /* =========================================================
-       CRUD
+        CRUD
     ========================================================= */
     createExport = asyncHandler(async (req: AuthRequest, res: Response, next: NextFunction) => {
         try {

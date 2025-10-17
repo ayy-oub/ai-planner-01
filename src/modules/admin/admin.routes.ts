@@ -3,12 +3,13 @@ import { AdminController } from './admin.controller';
 import { validate } from '../../shared/middleware/validation.middleware';
 import { authenticate, requireRoles } from '../../shared/middleware/auth.middleware';
 import adminValidations from './admin.validation';
-import { container } from 'tsyringe';
+import { adminController as adminControll } from '@/shared/container';
+;
 
 const router = Router();
-const adminController = container.resolve(AdminController);
+const adminController = adminControll;
 /* =================================================================
-   USER MANAGEMENT
+    USER MANAGEMENT
 ================================================================= */
 
 /**

@@ -1,4 +1,3 @@
-import { injectable } from 'tsyringe';
 import { Timestamp, FieldValue } from 'firebase-admin/firestore';
 import { logger } from '../../shared/utils/logger';
 import { AppError, ErrorCode } from '../../shared/utils/errors';
@@ -14,7 +13,6 @@ import {
 
 const firestore = firebaseConnection.getDatabase();
 
-@injectable()
 export class AIRepository {
     private readonly suggestionColl = firestore.collection('aiSuggestions');
     private readonly optimizationColl = firestore.collection('aiScheduleOptimizations');

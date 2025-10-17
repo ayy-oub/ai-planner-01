@@ -1,6 +1,6 @@
 import { firebaseConnection } from '../database/firebase';
 import { redisConnection } from '../database/redis';
-import { mongoConnection } from '../database/mongoose';
+//import { mongoConnection } from '../database/mongoose';
 import { queueManager } from '../queue/bullmq';
 import { config } from '../../shared/config';
 import { logger } from '../../shared/utils/logger';
@@ -49,7 +49,7 @@ class HealthCheckService {
         // Database health checks
         this.healthChecks.set('firebase', this.checkFirebaseHealth.bind(this));
         this.healthChecks.set('redis', this.checkRedisHealth.bind(this));
-        this.healthChecks.set('mongodb', this.checkMongoDBHealth.bind(this));
+        //this.healthChecks.set('mongodb', this.checkMongoDBHealth.bind(this));
 
         // Infrastructure health checks
         this.healthChecks.set('queue', this.checkQueueHealth.bind(this));
@@ -164,7 +164,7 @@ class HealthCheckService {
         }
     }
 
-    private async checkMongoDBHealth(): Promise<HealthCheck> {
+    /* private async checkMongoDBHealth(): Promise<HealthCheck> {
         const startTime = Date.now();
 
         try {
@@ -188,7 +188,7 @@ class HealthCheckService {
                 lastChecked: new Date(),
             };
         }
-    }
+    } */
 
     private async checkQueueHealth(): Promise<HealthCheck> {
         const startTime = Date.now();

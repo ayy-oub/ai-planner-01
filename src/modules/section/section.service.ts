@@ -1,10 +1,9 @@
 // src/modules/section/section.service.ts
-import { injectable, inject } from 'tsyringe';
 let uuidv4: () => string;
 
 (async () => {
-  const uuidModule = await import('uuid');
-  uuidv4 = uuidModule.v4;
+    const uuidModule = await import('uuid');
+    uuidv4 = uuidModule.v4;
 })();
 import { SectionRepository } from './section.repository';
 import { PlannerRepository } from '../planner/planner.repository';
@@ -22,13 +21,12 @@ import {
 import { AppError } from '../../shared/utils/errors';
 import { logger } from '../../shared/utils/logger';
 
-@injectable()
 export class SectionService {
     constructor(
-        @inject('SectionRepository') private sectionRepository: SectionRepository,
-        @inject('PlannerRepository') private plannerRepository: PlannerRepository,
-        @inject('ActivityRepository') private activityRepository: ActivityRepository,
-        @inject('AuditService') private auditService: AuditService
+        private sectionRepository: SectionRepository,
+        private plannerRepository: PlannerRepository,
+        private activityRepository: ActivityRepository,
+        private auditService: AuditService
     ) { }
 
     /* =========================================================

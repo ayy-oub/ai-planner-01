@@ -1,5 +1,5 @@
-import { Router } from 'express';
-import { container } from 'tsyringe';
+/* import { Router } from 'express';
+;
 import { CalendarController } from './calendar.controller';
 import { authMiddleware } from '../auth/auth.middleware';
 import { validationMiddleware } from '../../shared/middleware/validation.middleware';
@@ -13,7 +13,7 @@ const calendarController = container.resolve(CalendarController);
  * tags:
  *   name: Calendar
  *   description: Calendar integration and sync
- */
+ 
 
 // All routes require authentication
 router.use(authMiddleware());
@@ -47,7 +47,7 @@ router.use(authMiddleware());
  *         description: Google Calendar synced successfully
  *       400:
  *         description: Invalid auth code
- */
+ 
 router.post('/calendar/sync/google',
     rateLimiter({ windowMs: 60 * 1000, max: 5 }),
     validationMiddleware(calendarController.calendarValidation.syncGoogle),
@@ -83,7 +83,7 @@ router.post('/calendar/sync/google',
  *         description: Outlook Calendar synced successfully
  *       400:
  *         description: Invalid auth code
- */
+ 
 router.post('/calendar/sync/outlook',
     rateLimiter({ windowMs: 60 * 1000, max: 5 }),
     validationMiddleware(calendarController.calendarValidation.syncOutlook),
@@ -123,7 +123,7 @@ router.post('/calendar/sync/outlook',
  *     responses:
  *       200:
  *         description: Events retrieved successfully
- */
+ 
 router.get('/calendar/events',
     validationMiddleware(calendarController.calendarValidation.getEvents),
     calendarController.getEvents
@@ -168,7 +168,7 @@ router.get('/calendar/events',
  *     responses:
  *       201:
  *         description: Event created successfully
- */
+ 
 router.post('/calendar/events',
     rateLimiter({ windowMs: 60 * 1000, max: 10 }),
     validationMiddleware(calendarController.calendarValidation.createEvent),
@@ -211,7 +211,7 @@ router.post('/calendar/events',
  *     responses:
  *       200:
  *         description: Event updated successfully
- */
+ 
 router.patch('/calendar/events/:id',
     validationMiddleware(calendarController.calendarValidation.updateEvent),
     calendarController.updateEvent
@@ -234,7 +234,7 @@ router.patch('/calendar/events/:id',
  *     responses:
  *       200:
  *         description: Event deleted successfully
- */
+ 
 router.delete('/calendar/events/:id',
     validationMiddleware(calendarController.calendarValidation.deleteEvent),
     calendarController.deleteEvent
@@ -251,7 +251,7 @@ router.delete('/calendar/events/:id',
  *     responses:
  *       200:
  *         description: Settings retrieved successfully
- */
+ 
 router.get('/calendar/settings', calendarController.getSettings);
 
 /**
@@ -280,10 +280,10 @@ router.get('/calendar/settings', calendarController.getSettings);
  *     responses:
  *       200:
  *         description: Settings updated successfully
- */
+ 
 router.patch('/calendar/settings',
     validationMiddleware(calendarController.calendarValidation.updateSettings),
     calendarController.updateSettings
 );
 
-export default router;
+export default router; */

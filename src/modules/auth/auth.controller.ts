@@ -1,5 +1,4 @@
 import { Request, Response, NextFunction } from 'express';
-import { injectable, inject } from 'tsyringe';
 import { AuthService } from './auth.service';
 import { asyncHandler } from '../../shared/utils/async-handler';
 import { ApiResponse } from '../../shared/utils/api-response';
@@ -18,9 +17,8 @@ import { AppError } from '../../shared/utils/errors';
 
 type AuthRequest = Request & { user?: UserPayload };
 
-@injectable()
 export class AuthController {
-  constructor(@inject('AuthService') private authService: AuthService) {}
+  constructor(private authService: AuthService) {}
 
   register = asyncHandler(async (req: Request, res: Response, next: NextFunction): Promise<void> => {
     try {

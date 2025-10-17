@@ -7,8 +7,8 @@ import { FirebaseService } from '../services/firebase.service';
 import { AuthService } from '../../modules/auth/auth.service';
 import { AuthRequest, JwtPayload } from '../../modules/auth/auth.types'; // Adjust paths
 import { logger } from '../utils/logger';
-import { container } from 'tsyringe';
 import { User } from '../../modules/user/user.types';
+import { authService } from '../container';
 
 const cacheService = new CacheService();
 const firebaseService = FirebaseService.getInstance();
@@ -21,7 +21,7 @@ export class AuthMiddleware {
     private authService: AuthService;
 
     constructor() {
-        this.authService = container.resolve(AuthService);
+        this.authService = authService;
     }
 
     /**

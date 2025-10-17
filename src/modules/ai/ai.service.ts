@@ -1,12 +1,11 @@
 /* ------------------------------------------------------------------ */
 /*  ai.service.ts  –  OpenAI-powered implementation                   */
 /* ------------------------------------------------------------------ */
-import { Injectable } from '@nestjs/common';
 let uuidv4: () => string;
 
 (async () => {
-  const uuidModule = await import('uuid');
-  uuidv4 = uuidModule.v4;
+    const uuidModule = await import('uuid');
+    uuidv4 = uuidModule.v4;
 })();
 import { Timestamp } from 'firebase-admin/firestore';
 
@@ -37,7 +36,6 @@ import { UserRepository } from '../user/user.repository';
 import { PlannerRepository } from '../planner/planner.repository';
 import { SectionRepository } from '../section/section.repository';
 import { ActivityRepository } from '../activity/activity.repository';
-import { inject } from 'tsyringe';
 
 /* ---------- private return types ---------- */
 type GatherCtx = {
@@ -65,7 +63,6 @@ type HistoricalCtx = {
 };
 
 /* ------------------------------------------------------------------ */
-@Injectable()
 export class AIService {
     /* ---------- config ---------- */
     private readonly aiConfig: AIModelConfig;
@@ -88,9 +85,9 @@ export class AIService {
         private readonly repo: AIRepository,
         private readonly userRepo: UserRepository,
         private readonly cache: CacheService,
-        @inject(PlannerRepository) private readonly plannerRepo: PlannerRepository,
-        @inject(SectionRepository) private readonly sectionRepo: SectionRepository,
-        @inject(ActivityRepository) private readonly activityRepo: ActivityRepository,
+        private readonly plannerRepo: PlannerRepository,
+        private readonly sectionRepo: SectionRepository,
+        private readonly activityRepo: ActivityRepository,
     ) {
         this.aiConfig = {
             model: config.ai.model,

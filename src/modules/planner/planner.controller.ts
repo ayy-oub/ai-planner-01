@@ -1,18 +1,16 @@
 // src/modules/planner/planner.controller.ts
 import { Response, NextFunction } from 'express';
-import { injectable, inject } from 'tsyringe';
 import { PlannerService } from './planner.service';
 import { asyncHandler } from '../../shared/utils/async-handler';
 import { ApiResponse } from '../../shared/utils/api-response';
 import { AuthRequest } from '../auth/auth.types';
 import { logger } from '../../shared/utils/logger';
 
-@injectable()
 export class PlannerController {
-    constructor(@inject('PlannerService') private readonly plannerService: PlannerService) { }
+    constructor(private readonly plannerService: PlannerService) { }
 
     /* =========================================================
-       CRUD
+        CRUD
     ========================================================= */
     createPlanner = asyncHandler(async (req: AuthRequest, res: Response, next: NextFunction) => {
         try {

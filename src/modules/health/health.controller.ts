@@ -1,17 +1,15 @@
 import { Response, NextFunction } from 'express';
-import { injectable, inject } from 'tsyringe';
 import { HealthService } from './health.service';
 import { asyncHandler } from '../../shared/utils/async-handler';
 import { ApiResponse, PaginationInfo } from '../../shared/utils/api-response';
 import { AuthRequest } from '../../modules/auth/auth.types';
 import { logger } from '../../shared/utils/logger';
 
-@injectable()
 export class HealthController {
-    constructor(@inject('HealthService') private readonly healthService: HealthService) { }
+    constructor(private readonly healthService: HealthService) { }
 
     /* =========================================================
-       Basic Health
+        Basic Health
     ========================================================= */
     getHealth = asyncHandler(async (req: AuthRequest, res: Response, next: NextFunction) => {
         try {

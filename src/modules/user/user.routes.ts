@@ -1,11 +1,9 @@
 // src/modules/user/user.routes.ts
 import { Router } from 'express';
-import { container } from 'tsyringe';
-import { UserController } from './user.controller';
 import { authenticate } from '../../shared/middleware/auth.middleware';
 import { validate } from '../../shared/middleware/validation.middleware';
 import { rateLimiter } from '../../shared/middleware/rate-limit.middleware';
-import { 
+import {
     updateProfileValidation,
     updateSettingsValidation,
     updatePreferencesValidation,
@@ -18,10 +16,11 @@ import {
     updateSubscriptionValidation,
     userBulkOperationValidation,
     toggleTwoFactorValidation
-  } from './user.validations';
+} from './user.validations';
+import { userController as userControll } from '@/shared/container';
 
 const router = Router();
-const userController = container.resolve(UserController);
+const userController = userControll;
 
 /**
  * @swagger

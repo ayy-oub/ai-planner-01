@@ -1,10 +1,9 @@
 // src/modules/planner/planner.service.ts
-import { injectable, inject } from 'tsyringe';
 let uuidv4: () => string;
 
 (async () => {
-  const uuidModule = await import('uuid');
-  uuidv4 = uuidModule.v4;
+    const uuidModule = await import('uuid');
+    uuidv4 = uuidModule.v4;
 })();
 import { PlannerRepository } from './planner.repository';
 import { UserRepository } from '../user/user.repository';
@@ -29,22 +28,21 @@ import { logger } from '../../shared/utils/logger';
 import { ExportService } from '../export/export.service';
 import { ExportRequest } from '../export/export.types';
 
-@injectable()
 export class PlannerService {
     constructor(
-        @inject('PlannerRepository') private readonly plannerRepo: PlannerRepository,
-        @inject('UserRepository') private readonly userRepo: UserRepository,
-        @inject('SectionRepository') private readonly sectionRepo: SectionRepository,
-        @inject('ActivityRepository') private readonly activityRepo: ActivityRepository,
-        @inject('EmailService') private readonly email: EmailService,
-        @inject('ExportService') private readonly exportService: ExportService,
-        @inject('QueueService') private readonly queue: QueueService,
-        @inject('AuditService') private readonly audit: AuditService,
-        @inject('AIService') private readonly ai: AIService,
+        private readonly plannerRepo: PlannerRepository,
+        private readonly userRepo: UserRepository,
+        private readonly sectionRepo: SectionRepository,
+        private readonly activityRepo: ActivityRepository,
+        private readonly email: EmailService,
+        private readonly exportService: ExportService,
+        private readonly queue: QueueService,
+        private readonly audit: AuditService,
+        private readonly ai: AIService,
     ) { }
 
     /* =========================================================
-       CRUD
+        CRUD
     ========================================================= */
 
     async createPlanner(userId: string, data: any): Promise<PlannerResponse> {
@@ -309,12 +307,12 @@ export class PlannerService {
             const exportReq: ExportRequest = {
                 userId,
                 format: data.format,
-                type: 'planner',             
-                plannerId,                     
+                type: 'planner',
+                plannerId,
                 options: data.template ? { template: data.template } : undefined,
                 filters: undefined,
                 dateRange: undefined,
-              };
+            };
             switch (data.format) {
                 case 'pdf':
                     buffer = await this.exportService.exportPdf(exportReq);

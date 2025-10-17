@@ -1,17 +1,15 @@
 import { Response, NextFunction } from 'express';
-import { injectable, inject } from 'tsyringe';
 import { AdminService } from './admin.service';
 import { asyncHandler } from '../../shared/utils/async-handler';
 import { ApiResponse } from '../../shared/utils/api-response';
 import { AuthRequest } from '../../modules/auth/auth.types';
 import { logger } from '../../shared/utils/logger';
 
-@injectable()
 export class AdminController {
-    constructor(@inject('AdminService') private readonly adminService: AdminService) { }
+    constructor(private readonly adminService: AdminService) { }
 
     /* =========================================================
-       User management
+        User management
     ========================================================= */
 
     getUsers = asyncHandler(async (req: AuthRequest, res: Response, next: NextFunction): Promise<void> => {

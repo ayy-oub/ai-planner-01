@@ -1,5 +1,4 @@
 import { Response, NextFunction } from 'express';
-import { injectable, inject } from 'tsyringe';
 import { ActivityService } from './activity.service';
 import { asyncHandler } from '../../shared/utils/async-handler';
 import { ApiResponse } from '../../shared/utils/api-response';
@@ -7,14 +6,13 @@ import { AuthRequest } from '../auth/auth.types';
 import { logger } from '../../shared/utils/logger';
 import { ActivityFilterRequest, ActivityStatus, ActivityPriority, ActivityType } from './activity.types';
 
-@injectable()
 export class ActivityController {
     constructor(
-        @inject('ActivityService') private readonly activityService: ActivityService
+        private readonly activityService: ActivityService
     ) { }
 
     /* =========================================================
-       CRUD
+        CRUD
     ========================================================= */
 
     createActivity = asyncHandler(async (req: AuthRequest, res: Response, next: NextFunction) => {

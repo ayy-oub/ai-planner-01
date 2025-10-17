@@ -1,13 +1,13 @@
 import { Router } from 'express';
-import { container } from 'tsyringe';
-import { AIController } from './ai.controller';
+;
 import { authenticate } from '../../shared/middleware/auth.middleware';
 import { validate } from '../../shared/middleware/validation.middleware';
 import { rateLimiter } from '../../shared/middleware/rate-limit.middleware';
 import { aiValidations } from './ai.validations';
+import { aiController as aiControll } from '@/shared/container';
 
 const router = Router();
-const aiController = container.resolve(AIController);
+const aiController = aiControll
 
 /**
  * @swagger

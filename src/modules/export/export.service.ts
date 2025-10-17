@@ -1,10 +1,9 @@
 // src/modules/export/export.service.ts
-import { injectable, inject } from 'tsyringe';
 let uuidv4: () => string;
 
 (async () => {
-  const uuidModule = await import('uuid');
-  uuidv4 = uuidModule.v4;
+    const uuidModule = await import('uuid');
+    uuidv4 = uuidModule.v4;
 })();
 import { ExportRepository } from './export.repository';
 import { UserRepository } from '../user/user.repository';
@@ -27,7 +26,6 @@ import { AppError, ErrorCode } from '../../shared/utils/errors';
 import { logger } from '../../shared/utils/logger';
 import { format } from 'date-fns';
 
-@injectable()
 export class ExportService {
     private readonly quotaCfg = {
         free: { monthly: 10, maxBytes: 5 * 1024 * 1024 },
@@ -36,15 +34,15 @@ export class ExportService {
     };
 
     constructor(
-        @inject('ExportRepository') private readonly repo: ExportRepository,
-        @inject('UserRepository') private readonly userRepo: UserRepository,
-        @inject('PlannerRepository') private readonly plannerRepo: PlannerRepository,
-        @inject('SectionRepository') private readonly sectionRepo: SectionRepository,
-        @inject('ActivityRepository') private readonly activityRepo: ActivityRepository,
-        @inject('FileUploadService') private readonly files: FileUploadService,
-        @inject('QueueService') private readonly queue: QueueService,
-        @inject('EmailService') private readonly email: EmailService,
-        @inject('AuditService') private readonly audit: AuditService,
+        private readonly repo: ExportRepository,
+        private readonly userRepo: UserRepository,
+        private readonly plannerRepo: PlannerRepository,
+        private readonly sectionRepo: SectionRepository,
+        private readonly activityRepo: ActivityRepository,
+        private readonly files: FileUploadService,
+        private readonly queue: QueueService,
+        private readonly email: EmailService,
+        private readonly audit: AuditService,
     ) { }
 
     /* =========================================================

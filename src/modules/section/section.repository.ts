@@ -1,5 +1,4 @@
 // src/modules/section/section.repository.ts
-import { injectable } from 'tsyringe';
 import { Timestamp } from 'firebase-admin/firestore';
 import firebaseConnection from '../../infrastructure/database/firebase';
 import { CacheService } from '../../shared/services/cache.service';
@@ -12,7 +11,6 @@ import {
 
 const firestore = firebaseConnection.getDatabase();
 
-@injectable()
 export class SectionRepository {
     private readonly sectionColl = firestore.collection('sections');
     private readonly activityColl = firestore.collection('activities');

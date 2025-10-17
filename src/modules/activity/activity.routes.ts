@@ -1,13 +1,12 @@
 import { Router } from 'express';
-import { container } from 'tsyringe';
-import { ActivityController } from './activity.controller';
 import { authenticate } from '../../shared/middleware/auth.middleware';
 import { validate } from '../../shared/middleware/validation.middleware';
 import { rateLimiter } from '../../shared/middleware/rate-limit.middleware';
 import { activityValidation } from './activity.validations';
+import { activityController as activityControll } from '@/shared/container';
 
 const router = Router();
-const activityController = container.resolve(ActivityController);
+const activityController = activityControll;
 
 /**
  * @swagger

@@ -1,4 +1,4 @@
-import mongoose from 'mongoose';
+/* import mongoose from 'mongoose';
 import { config } from '../../shared/config';
 import { logger } from '../../shared/utils/logger';
 import { AppError } from '../../shared/utils/errors';
@@ -137,4 +137,4 @@ class MongoConnection {
 
 // Export singleton instance
 export const mongoConnection = MongoConnection.getInstance();
-export default mongoConnection;
+export default mongoConnection; */

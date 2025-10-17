@@ -2,15 +2,14 @@
 /*  export.routes.ts  –  Express router (no NestJS)                   */
 /* ------------------------------------------------------------------ */
 import { Router } from 'express';
-import { container } from 'tsyringe';
-import { ExportController } from './export.controller';
 import { authenticate } from '../../shared/middleware/auth.middleware';
 import { validate } from '../../shared/middleware/validation.middleware';
 import { rateLimiter } from '../../shared/middleware/rate-limit.middleware';
 import { exportValidations } from './export.validation';
+import { exportController as exportControll} from '@/shared/container';
 
 const router = Router();
-const exportController = container.resolve(ExportController);
+const exportController = exportControll;
 
 /**
  * @swagger
@@ -281,7 +280,7 @@ router.get('/',
 
 /**
  * @swagger
- * /exports/:exportId
+ * "/exports/:exportId"
  *   get:
  *     summary: Get export by ID
  *     tags: [Export]
@@ -306,7 +305,7 @@ router.get('/:exportId',
 
 /**
  * @swagger
- * /exports/:exportId/download
+ * "/exports/:exportId/download"
  *   get:
  *     summary: Download export file
  *     tags: [Export]
@@ -336,7 +335,7 @@ router.get('/:exportId/download',
 
 /**
  * @swagger
- * /exports/:exportId
+ * "/exports/:exportId"
  *   delete:
  *     summary: Delete export
  *     tags: [Export]
@@ -359,7 +358,7 @@ router.delete('/:exportId',
 
 /**
  * @swagger
- * /quota
+ * "/quota"
  *   get:
  *     summary: Get export quota information
  *     tags: [Export]
