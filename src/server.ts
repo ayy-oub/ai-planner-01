@@ -1,5 +1,4 @@
 import 'reflect-metadata';
-import '@/shared/container';
 import 'dotenv/config';
 import 'module-alias/register';
 import cluster from 'cluster';
@@ -10,18 +9,25 @@ import { config } from '../src/shared/config';
 import { logger } from '../src/shared/utils/logger';
 import { healthCheck } from '../src/infrastructure/monitoring/health-check';
 import { connectDatabase } from '../src/infrastructure/database/firebase';
-//import { connectRedis } from '../src/infrastructure/database/redis';
 import { setupGracefulShutdown } from '../src/shared/utils/graceful-shutdown';
+// Removed: import '@/shared/container';
 import '@/shared/xss-clean';
+import { registerDependencies } from '@/shared/container';
 
 const numCPUs = os.cpus().length;
 const PORT = config.app.port;
 
 async function startServer() {
     try {
-        // Connect to databases
+        // Register dependencies first!
+        await registerDependencies();
+
+        // Connect to other databases
         await connectDatabase();
-        //const redisClient = await connectRedis();
+
+        // Now it's safe to resolve anything from the container
+        // (No need to connect Redis here separately if container manages it)
+        // But if you want to keep connectRedis here, be consistent
 
         const server = app.listen(PORT, () => {
             logger.info(`🚀 Server running on port ${PORT} in ${config.app.env} mode`);
@@ -34,9 +40,13 @@ async function startServer() {
             }
         });
 
-        //const shutdownManager = setupGracefulShutdown(server, redisClient);
+        // Setup graceful shutdown with Redis client from container
+        // Resolve redisClient from container if needed
+        // const redisClient = container.resolve<Redis>('RedisClient');
+        // or pass redisClient to shutdownManager if you want
+        
+        const shutdownManager = setupGracefulShutdown(server /*, redisClient */);
 
-        // Graceful shutdown
         createTerminus(server, {
             signal: 'SIGINT',
             healthChecks: {
@@ -46,7 +56,7 @@ async function startServer() {
             },
             onSignal: async () => {
                 logger.info('Server is starting cleanup');
-                //await shutdownManager.shutdown('SIGINT');
+                await shutdownManager.shutdown('SIGINT');
             },
             onShutdown: async () => {
                 logger.info('Cleanup finished, server is shutting down');

@@ -4,7 +4,6 @@ import { logger } from '../utils/logger';
 import { CacheError } from '../utils/errors';
 import { gzip, ungzip } from 'node-gzip';
 import { inject, injectable } from 'tsyringe';
-import { getRedisClient } from '@/infrastructure/database/redis';
 
 /**
  * Cache service options
@@ -47,10 +46,11 @@ export class CacheService {
     };
     private compressionThreshold = 1024; // 1KB
 
-    constructor(@inject('RedisClient') redis?: Redis) {
-        this.redis = redis || getRedisClient(); // shared singleton
+    constructor() {
+        const { getRedisClient } = require('@/infrastructure/database/redis');
+        this.redis = getRedisClient();
         this.setupEventHandlers();
-      }
+    }
 
     getClient(): Redis {
         return this.redis;
@@ -150,7 +150,7 @@ export class CacheService {
     async ping(): Promise<'PONG'> {
         // this.client is the ioredis instance
         return this.redis.ping();
-      }
+    }
 
     /**
      * Set value in cache
@@ -704,8 +704,8 @@ export class CacheService {
  * Session cache service
  */
 export class SessionCacheService extends CacheService {
-    constructor(redis?: Redis) {
-        super(redis);
+    constructor() {
+        super();
     }
 
     /**
@@ -787,8 +787,8 @@ export class SessionCacheService extends CacheService {
  * User cache service
  */
 export class UserCacheService extends CacheService {
-    constructor(redis?: Redis) {
-        super(redis);
+    constructor() {
+        super();
     }
 
     /**
@@ -881,8 +881,8 @@ export class UserCacheService extends CacheService {
  * Rate limit cache service
  */
 export class RateLimitCacheService extends CacheService {
-    constructor(redis?: Redis) {
-        super(redis);
+    constructor() {
+        super();
     }
 
     /**
@@ -992,8 +992,8 @@ export class RateLimitCacheService extends CacheService {
  * API response cache service
  */
 export class ApiResponseCacheService extends CacheService {
-    constructor(redis?: Redis) {
-        super(redis);
+    constructor() {
+        super();
     }
 
     /**
@@ -1202,4 +1202,10 @@ export class CacheWarmingService {
     }
 }
 
-export const cacheService = new CacheService();
+let _inst: CacheService | undefined;
+export const cacheService = {
+    get instance(): CacheService {
+        if (!_inst) _inst = new CacheService();
+        return _inst;
+    }
+};

@@ -61,20 +61,20 @@ class RedisConnection {
             /* 1. main client */
             this.client = new Redis(redisOptions);
             /* 2. publisher */
-            this.publisher = this.client.duplicate();
+            //this.publisher = this.client.duplicate();
             /* 3. subscriber */
-            this.subscriber = this.client.duplicate();
+            //this.subscriber = this.client.duplicate();
 
             /* wire events once */
-            [this.client, this.publisher, this.subscriber].forEach((c) =>
+           /*  [this.client, this.publisher, this.subscriber].forEach((c) =>
                 this.setupEventHandlers(c),
-            );
+            ); */
 
             /* connect all three */
             await Promise.all([
                 this.client.connect(),
-                this.publisher.connect(),
-                this.subscriber.connect(),
+                //this.publisher.connect(),
+                //this.subscriber.connect(),
             ]);
 
             this.isConnected = true;

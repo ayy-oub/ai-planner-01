@@ -2,9 +2,12 @@ import { Request, Response, NextFunction } from 'express';
 import { config } from '../config';
 import { AppError, ErrorCode } from '../utils/errors';
 import { logger } from '../utils/logger';
-import { CacheService } from '../services/cache.service';
+import { cacheService as cache } from '@/shared/services/cache.service';
 
-const cacheService = new CacheService();
+const getCache = () => {
+  const { cacheService } = require('@/shared/services/cache.service');
+  return cacheService.instance;
+};
 
 export const errorHandler = (
   err: Error,
@@ -131,7 +134,7 @@ const logError = async (error: AppError, req: Request): Promise<void> => {
 
     // Store critical errors in cache for monitoring
     if (error.statusCode >= 500) {
-      await cacheService.set(
+      await getCache().set(
         `error:${Date.now()}:${Math.random()}`,
         JSON.stringify(errorLog),
         { ttl: 60 * 60 * 24 } // 24 hours
@@ -257,7 +260,7 @@ export const asyncHandler = (fn: Function) => (req: Request, res: Response, next
 process.on('uncaughtException', async (error: Error) => {
   try {
     logger.error('UNCAUGHT EXCEPTION! 💥 Shutting down...', error);
-    await cacheService.disconnect();
+    await getCache().disconnect();
   } catch (cleanupError) {
     console.error('Cleanup failed during uncaught exception:', cleanupError);
   }
@@ -270,7 +273,7 @@ process.on('unhandledRejection', async (reason: any, promise: Promise<any>) => {
       reason,
       promise: promise.toString(),
     });
-    await cacheService.disconnect();
+    await getCache().disconnect();
   } catch (cleanupError) {
     console.error('Cleanup failed during unhandled rejection:', cleanupError);
   }
@@ -280,7 +283,7 @@ process.on('unhandledRejection', async (reason: any, promise: Promise<any>) => {
 process.on('SIGTERM', async () => {
   try {
     logger.info('👋 SIGTERM RECEIVED. Shutting down gracefully');
-    await cacheService.disconnect();
+    await getCache().disconnect();
   } catch (cleanupError) {
     console.error('Cleanup failed during SIGTERM:', cleanupError);
   }
@@ -290,7 +293,7 @@ process.on('SIGTERM', async () => {
 process.on('SIGINT', async () => {
   try {
     logger.info('👋 SIGINT RECEIVED. Shutting down gracefully');
-    await cacheService.disconnect();
+    await getCache().disconnect();
   } catch (cleanupError) {
     console.error('Cleanup failed during SIGINT:', cleanupError);
   }
