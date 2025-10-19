@@ -13,16 +13,18 @@ import { EmailService } from '../../shared/services/email.service';
 import { AppError, ErrorCode } from '../../shared/utils/errors';
 import { logger } from '../../shared/utils/logger';
 import { Timestamp } from 'firebase-admin/firestore';
+import { cacheService, emailService } from '../../shared/container'; // singletons
 
 export class AdminService {
     constructor(
         private readonly adminRepo: AdminRepository,
-        private readonly cache: CacheService,
-        private readonly email: EmailService
     ) { }
 
+    private get cache(): CacheService { return cacheService; }
+    private get email(): EmailService { return emailService; }
+
     /* =========================================================
-       User management
+        User management
     ========================================================= */
 
     async getAllUsers(filter: UserFilter, adminId: string) {

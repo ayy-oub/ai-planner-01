@@ -13,6 +13,7 @@ import {
     Section,
     Collaborator,
 } from './planner.types';
+import { cacheService } from '@/shared/container';
 
 const firestore = firebaseConnection.getDatabase();
 
@@ -21,7 +22,9 @@ export class PlannerRepository {
     private readonly sectionColl = firestore.collection('sections');
     private readonly activityColl = firestore.collection('activities');
 
-    constructor(private readonly cacheService: CacheService) { }
+    constructor() { }
+
+    get cacheService(): CacheService { return cacheService; }
 
     /* ------------------------------------------------------------------ */
     /*  Core CRUD                                                         */

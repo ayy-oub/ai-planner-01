@@ -27,19 +27,30 @@ import { AppError, ErrorCode } from '../../shared/utils/errors';
 import { logger } from '../../shared/utils/logger';
 import { ExportService } from '../export/export.service';
 import { ExportRequest } from '../export/export.types';
+import {
+    userRepository,
+    sectionRepository,
+    activityRepository,
+    emailService,
+    exportService,
+    queueService,
+    auditService,
+    aiService,
+} from '../../shared/container'; // singletons
 
 export class PlannerService {
-    constructor(
-        private readonly plannerRepo: PlannerRepository,
-        private readonly userRepo: UserRepository,
-        private readonly sectionRepo: SectionRepository,
-        private readonly activityRepo: ActivityRepository,
-        private readonly email: EmailService,
-        private readonly exportService: ExportService,
-        private readonly queue: QueueService,
-        private readonly audit: AuditService,
-        private readonly ai: AIService,
-    ) { }
+    constructor(private readonly plannerRepo: PlannerRepository) { }
+
+    /* ---- getters for the singletons we still need ---- */
+    private get userRepo(): UserRepository { return userRepository; }
+    private get sectionRepo(): SectionRepository { return sectionRepository; }
+    private get activityRepo(): ActivityRepository { return activityRepository; }
+    private get email(): EmailService { return emailService; }
+    private get exportService(): ExportService { return exportService; }
+    private get queue(): QueueService { return queueService; }
+    private get audit(): AuditService { return auditService; }
+    private get ai(): AIService { return aiService; }
+
 
     /* =========================================================
         CRUD

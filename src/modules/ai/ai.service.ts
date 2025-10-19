@@ -16,6 +16,13 @@ import { createServiceClient } from '../../infrastructure/external/serviceClient
 import { logger } from '../../shared/utils/logger';
 import { RateLimitError, AppError, ErrorCode } from '../../shared/utils/errors';
 import { config } from '../../shared/config';
+import {
+    userRepository,
+    cacheService,
+    plannerRepository,
+    sectionRepository,
+    activityRepository,
+} from '../../shared/container';
 
 /* ---------- types ---------- */
 import {
@@ -81,14 +88,7 @@ export class AIService {
     /* ---------- OpenAI client (circuit-breaker, retries, tracing) ---------- */
     private readonly openAI = createServiceClient('openAI', config.ai.apiKey);
 
-    constructor(
-        private readonly repo: AIRepository,
-        private readonly userRepo: UserRepository,
-        private readonly cache: CacheService,
-        private readonly plannerRepo: PlannerRepository,
-        private readonly sectionRepo: SectionRepository,
-        private readonly activityRepo: ActivityRepository,
-    ) {
+    constructor(private readonly repo: AIRepository) {
         this.aiConfig = {
             model: config.ai.model,
             maxTokens: config.ai.maxTokens,
@@ -98,7 +98,16 @@ export class AIService {
             presencePenalty: config.ai.presencePenalty,
             timeout: config.ai.timeout,
         };
+        logger.info('[AIService] Initialized with model config');
     }
+
+    /* ---------- getters for singletons ---------- */
+    private get userRepo(): UserRepository { return userRepository; }
+    private get cache(): CacheService { return cacheService; }
+    private get plannerRepo(): PlannerRepository { return plannerRepository; }
+    private get sectionRepo(): SectionRepository { return sectionRepository; }
+    private get activityRepo(): ActivityRepository { return activityRepository; }
+
 
     /* ================================================================= */
     /*  Public  –  entry-points mirrored from controller                 */

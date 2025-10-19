@@ -1,57 +1,3 @@
-/* // src/shared/container.ts
-;
-import Redis from 'ioredis';
-
-// ---------- Infrastructure ----------
-import { connectRedis } from '@/infrastructure/database/redis';
-import { firebaseConnection } from '@/infrastructure/database/firebase';
-
-// ---------- Repositories ----------
-import { AuthRepository } from '@/modules/auth/auth.repository';
-import { UserRepository } from '@/modules/user/user.repository';
-import { PlannerRepository } from '@/modules/planner/planner.repository';
-import { SectionRepository } from '@/modules/section/section.repository';
-import { ActivityRepository } from '@/modules/activity/activity.repository';
-import { ExportService } from '../modules/export/export.service';
-
-// ---------- Services ----------
-import { CacheService } from './services/cache.service';
-import { EmailService } from './services/email.service';
-import { AuditService } from './services/audit.service';
-import { QueueService } from './services/queue.service';
-import { FirebaseService } from './services/firebase.service';
-import { AuthService } from '@/modules/auth/auth.service';
-import { UserService } from '@/modules/user/user.service';
-import { SecurityMiddleware } from './middleware/security.middleware';
-
-export async function registerDependencies() {
-    // 1.  wait for connections
-    const redisClient = await connectRedis(); // returns connected Redis
-
-    // 2.  register infrastructure singletons
-    container.registerInstance('RedisClient', redisClient);
-    container.registerInstance('FirebaseAdmin', firebaseConnection.getApp());
-
-    // 3.  register repositories (singletons)
-    container.registerSingleton('AuthRepository', AuthRepository);
-    container.registerSingleton('UserRepository', UserRepository);
-    container.registerSingleton('PlannerRepository', PlannerRepository);
-    container.registerSingleton('SectionRepository', SectionRepository);
-    container.registerSingleton('ActivityRepository', ActivityRepository);
-
-    // 4.  register services (singletons)
-    container.registerSingleton(CacheService);
-    container.registerSingleton(EmailService);
-    container.registerSingleton(AuditService);
-    container.registerSingleton(QueueService);
-    container.registerSingleton(FirebaseService);
-    container.registerSingleton<AuthService>('AuthService', AuthService);
-    container.registerSingleton(UserService);
-    container.registerSingleton(SecurityMiddleware);
-
-    console.log('✅  All tokens registered in tsyringe');
-} */
-
 // src/shared/container.ts
 import { QueueService, QueueServiceConfig } from './services/queue.service';
 import { CacheService } from './services/cache.service';
@@ -88,14 +34,12 @@ import { HealthService } from '@/modules/health/health.service';
 import { HealthController } from '@/modules/health/health.controller';
 import { HealthRepository } from '@/modules/health/health.repository';
 
-// ---------------------  base dependencies ---------------------
+// ---------------------  singleton services --------------------
 export const cacheService = new CacheService();
 export const fileUploadService = new FileUploadService();
 export const emailService = new EmailService();
 export const firebaseService = new FirebaseService();
-export const auditService = new AuditService(firebaseService);
-
-// ---------------------  queue service -------------------------
+export const auditService = new AuditService(); // <- no param any more
 const queueConfig: QueueServiceConfig = {
     redis: {
         host: config.redis.host,
@@ -113,86 +57,27 @@ const queueConfig: QueueServiceConfig = {
 export const queueService = new QueueService(queueConfig);
 
 // ---------------------  repositories --------------------------
-export const authRepository = new AuthRepository(firebaseService);
+export const authRepository = new AuthRepository();
 export const userRepository = new UserRepository();
-export const plannerRepository = new PlannerRepository(cacheService);
-export const sectionRepository = new SectionRepository(cacheService);
-export const activityRepository = new ActivityRepository(cacheService);
-export const aiRepository = new AIRepository(cacheService);
-export const exportRepository = new ExportRepository(cacheService);
+export const plannerRepository = new PlannerRepository();
+export const sectionRepository = new SectionRepository();
+export const activityRepository = new ActivityRepository();
+export const aiRepository = new AIRepository();
+export const exportRepository = new ExportRepository();
 export const adminRepository = new AdminRepository();
-export const healthRepository = new HealthRepository(firebaseService, cacheService);
+export const healthRepository = new HealthRepository();
 
-// ---------------------  services ------------------------------
-export const authService = new AuthService(
-    authRepository,
-    cacheService,
-    emailService,
-    auditService,
-    queueService
-);
+// ---------------------  services (1-arg constructors) --------
+export const authService = new AuthService(authRepository);
+export const userService = new UserService(userRepository);
+export const sectionService = new SectionService(sectionRepository);
+export const activityService = new ActivityService(activityRepository);
+export const exportService = new ExportService(exportRepository);
+export const aiService = new AIService(aiRepository);
+export const plannerService = new PlannerService(plannerRepository);
+export const adminService = new AdminService(adminRepository);
+export const healthService = new HealthService(healthRepository);
 
-export const userService = new UserService(
-    userRepository,
-    cacheService,
-    emailService,
-    firebaseService
-);
-
-export const sectionService = new SectionService(
-    sectionRepository,
-    plannerRepository,
-    activityRepository,
-    auditService,
-);
-export const activityService = new ActivityService(
-    activityRepository
-);
-
-export const exportService = new ExportService(
-    exportRepository,
-    userRepository,
-    plannerRepository,
-    sectionRepository,
-    activityRepository,
-    fileUploadService,
-    queueService,
-    emailService,
-    auditService,
-);
-
-export const aiService = new AIService(
-    aiRepository,
-    userRepository,
-    cacheService,
-    plannerRepository,
-    sectionRepository,
-    activityRepository,
-);
-
-export const plannerService = new PlannerService(
-    plannerRepository,
-    userRepository,
-    sectionRepository,
-    activityRepository,
-    emailService,
-    exportService,
-    queueService,
-    auditService,
-    aiService,
-);
-
-export const adminService = new AdminService(
-    adminRepository,
-    cacheService,
-    emailService
-);
-
-export const healthService = new HealthService(
-    healthRepository,
-    cacheService,
-    firebaseService
-);
 // ---------------------  controllers ---------------------------
 export const adminController = new AdminController(adminService);
 export const authController = new AuthController(authService);

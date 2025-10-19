@@ -4,6 +4,7 @@ import { AppError, ErrorCode } from '../../shared/utils/errors';
 import { logger } from '../../shared/utils/logger';
 import firebaseConnection from '../../infrastructure/database/firebase';
 import { FirebaseService } from '../../shared/services/firebase.service';
+import { firebaseService } from '@/shared/container';
 
 const firestore = firebaseConnection.getDatabase();
 
@@ -19,9 +20,8 @@ function deepMerge(target: any, source: any): any {
 export class AuthRepository {
   private collection = firestore.collection('users');
 
-  constructor(
-    private firebaseService: FirebaseService
-  ) {}
+  constructor() { }
+  private get firebaseService(): FirebaseService { return firebaseService; }
 
   /* ------------------------------------------------------------------ */
   /*  CRUD                                                              */
@@ -36,7 +36,7 @@ export class AuthRepository {
         const bcrypt = await import('bcryptjs');
         hashedPassword = await bcrypt.hash(plainPassword, 12); // 12 rounds
       }
-  
+
       /* ---------- 2. Create in Firebase Auth (if password provided) ---------- */
       let firebaseUid = userData.uid;
       if (plainPassword) {
@@ -48,11 +48,11 @@ export class AuthRepository {
         });
         firebaseUid = firebaseUser.uid;
       }
-  
+
       /* ---------- 3. Prepare Firestore data (NO password field) ---------- */
       const uid = firebaseUid || this.collection.doc().id;
       const docRef = this.collection.doc(uid);
-  
+
       const userDataWithDefaults: Partial<User> = {
         ...userData,
         uid,
@@ -113,10 +113,10 @@ export class AuthRepository {
         createdAt: new Date(),
         updatedAt: new Date(),
       };
-  
+
       /* ---------- 4. Strip password before Firestore write ---------- */
       const { password, ...firestoreData } = userDataWithDefaults;
-  
+
       await docRef.set(firestoreData);
       const doc = await docRef.get();
       return { uid: doc.id, ...doc.data() } as User;

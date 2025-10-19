@@ -1,11 +1,11 @@
 // src/shared/services/audit.service.ts
-import { inject, injectable } from 'inversify';
 import { FirebaseService } from './firebase.service';
 import logger from '../utils/logger';
 import { AppError } from '../utils/errors';
 import { config } from '../config';
 import admin from 'firebase-admin';
 import { SecurityLog } from '../types';
+import { firebaseService } from '../container';
 
 /* ------------------------------------------------------------------ */
 /* Types                                                              */
@@ -72,16 +72,15 @@ interface RetentionPolicy {
 /* Service                                                            */
 /* ------------------------------------------------------------------ */
 
-@injectable()
 export class AuditService {
     private readonly collectionName = 'audit_logs';
     private readonly isEnabled: boolean;
 
     constructor(
-        @inject(FirebaseService) private readonly firebaseService: FirebaseService,
     ) {
         this.isEnabled = config.logging.enableAuditLog !== false;
     }
+    private get firebaseService(): FirebaseService { return firebaseService}
 
     /* ------------------------ Core logging ---------------------------- */
 

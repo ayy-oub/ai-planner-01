@@ -60,11 +60,7 @@ export class AuthController {
         maxAge: 7 * 24 * 60 * 60 * 1000,
       });
 
-      const response = new ApiResponse(req).success({
-        user: result.user,
-        accessToken: result.tokens.accessToken,
-        expiresIn: result.tokens.expiresIn,
-      }, 'Login successful');
+      const response = new ApiResponse(req).success(result, 'Login successful');
       res.json(response);
     } catch (error) {
       logger.error('Login controller error:', error);
@@ -74,7 +70,8 @@ export class AuthController {
 
   refreshToken = asyncHandler(async (req: Request, res: Response, next: NextFunction): Promise<void> => {
     try {
-      const refreshToken: RefreshTokenRequest = req.cookies.refreshToken || req.body.refreshToken;
+      //console.log('Refresh token request received', req.body);
+      const refreshToken: RefreshTokenRequest = req.body;
       if (!refreshToken) {
         const err = new AppError('Refresh token is required', 401, 'UNAUTHORIZED');
         res.status(401).json(new ApiResponse(req).error(err));
@@ -89,10 +86,7 @@ export class AuthController {
         maxAge: 7 * 24 * 60 * 60 * 1000,
       });
 
-      const response = new ApiResponse(req).success({
-        accessToken: tokens.accessToken,
-        expiresIn: tokens.expiresIn,
-      }, 'Token refreshed successfully');
+      const response = new ApiResponse(req).success(tokens, 'Token refreshed successfully');
       res.json(response);
     } catch (error) {
       logger.error('Refresh token controller error:', error);

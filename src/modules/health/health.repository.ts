@@ -7,14 +7,14 @@ import {
     HealthHistory,
     HealthReport,
 } from './health.types';
+import { cacheService, firebaseService } from '@/shared/container';
 
 export class HealthRepository {
     private readonly logger = new Logger(HealthRepository.name);
 
-    constructor(
-        private readonly firebaseService: FirebaseService,
-        private readonly cacheService: CacheService,
-    ) { }
+    constructor() { }
+    get cacheService(): CacheService { return cacheService; }
+    get firebaseService(): FirebaseService { return firebaseService; }
 
     private get db() {
         return this.firebaseService.db;

@@ -160,16 +160,13 @@ export class EmailService {
    * Initialize email templates
    */
   private initializeTemplates(): void {
-    if (!this.config.templates) {
-      return;
-    }
 
     try {
       // Load built-in templates
       this.loadBuiltinTemplates();
 
       // Load custom templates if path provided
-      if (this.config.templates.path) {
+      if (this.config.templates?.path) {
         this.loadCustomTemplates(this.config.templates.path);
       }
 
@@ -184,6 +181,7 @@ export class EmailService {
    * Load built-in email templates
    */
   private loadBuiltinTemplates(): void {
+    logger.info('Loading built-in email templates');
     const builtinTemplates: EmailTemplate[] = [
       {
         name: 'welcome',
@@ -441,41 +439,6 @@ export class EmailService {
         `,
       },
       {
-        name: 'email-verification',
-        subject: 'Verify your email address',
-        html: `
-          <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
-            <h1 style="color: #333;">Verify your email address</h1>
-            <p>Hi {{name}},</p>
-            <p>Thanks for signing up! Please verify your email address by clicking the button below:</p>
-            <div style="text-align: center; margin: 30px 0;">
-              <a href="{{verificationUrl}}" style="background-color: #28a745; color: white; padding: 12px 24px; text-decoration: none; border-radius: 4px;">
-                Verify Email
-              </a>
-            </div>
-            <p>If you didn't create an account, you can safely ignore this email.</p>
-            <p>This link will expire in {{expiryHours}} hours.</p>
-            <p>Best regards,<br>The AI Planner Team</p>
-          </div>
-        `,
-        text: `
-          Verify your email address
-  
-          Hi {{name}},
-  
-          Thanks for signing up! Please verify your email address by clicking the link below:
-  
-          {{verificationUrl}}
-  
-          If you didn't create an account, you can safely ignore this email.
-  
-          This link will expire in {{expiryHours}} hours.
-  
-          Best regards,
-          The AI Planner Team
-        `,
-      },
-      {
         name: 'account-locked',
         subject: 'Your account has been locked',
         html: `
@@ -595,6 +558,7 @@ export class EmailService {
    * Load custom templates
    */
   private loadCustomTemplates(templatesPath: string): void {
+    console.log('Loading custom email templates from', templatesPath);
     try {
       const templateFiles = readdirSync(templatesPath);
 

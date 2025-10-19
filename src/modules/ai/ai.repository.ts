@@ -10,6 +10,7 @@ import {
     AIAnalysisResult,
     AIRequestLog,
 } from './ai.types';
+import { cacheService } from '@/shared/container';
 
 const firestore = firebaseConnection.getDatabase();
 
@@ -22,7 +23,9 @@ export class AIRepository {
     private readonly statsColl = firestore.collection('aiUserStats');
     private readonly cachePrefix = 'ai:';
 
-    constructor(private readonly cacheService: CacheService) { }
+    constructor() { }
+    get cacheService(): CacheService { return cacheService; }
+
 
     /* ------------------------------------------------------------------ */
     /*  Suggestions                                                       */

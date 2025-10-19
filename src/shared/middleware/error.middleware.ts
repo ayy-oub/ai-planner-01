@@ -2,36 +2,45 @@ import { Request, Response, NextFunction } from 'express';
 import { config } from '../config';
 import { AppError, ErrorCode } from '../utils/errors';
 import { logger } from '../utils/logger';
-import { cacheService as cache } from '@/shared/services/cache.service';
 
 const getCache = () => {
   const { cacheService } = require('@/shared/services/cache.service');
   return cacheService.instance;
 };
 
-export const errorHandler = (
-  err: Error,
-  req: Request,
-  res: Response,
-  next: NextFunction
-): void => {
+/**
+ * Safely extract request data to avoid getter-only properties
+ */
+const safeRequestData = (req: Request) => ({
+  url: req.originalUrl,
+  method: req.method,
+  body: req.body,
+  query: { ...req.query },
+  params: { ...req.params },
+  headers: { ...req.headers },
+  ip: req.ip,
+  userAgent: req.get('user-agent'),
+  userId: (req as any).user?.uid,
+});
+
+/**
+ * Error handling middleware
+ */
+export const errorHandler = (err: Error, req: Request, res: Response, next: NextFunction): void => {
   try {
     let error: AppError;
 
     if (err instanceof AppError) {
       error = err;
     } else if (err.name === 'ValidationError') {
-      // Handle Mongoose validation errors
       const mongooseError = err as any;
       const details = Object.values(mongooseError.errors || {}).map((error: any) => ({
         field: error.path,
         message: error.message,
         value: error.value,
       }));
-
       error = new AppError('Validation failed', 400, JSON.stringify(details), ErrorCode.INVALID_INPUT);
     } else if (err.name === 'CastError') {
-      // Handle Mongoose cast errors
       const castError = err as any;
       error = new AppError(
         `Invalid ${castError.path}: ${castError.value}`,
@@ -40,7 +49,6 @@ export const errorHandler = (
         ErrorCode.INVALID_INPUT
       );
     } else if ((err as any).code === 11000) {
-      // Handle duplicate key errors
       const field = Object.keys((err as any).keyValue || {})[0];
       error = new AppError(
         `${field} already exists`,
@@ -59,19 +67,8 @@ export const errorHandler = (
     } else if ((err as any).code === 'ETIMEDOUT') {
       error = new AppError('Request timeout', 408, undefined, ErrorCode.SERVICE_UNAVAILABLE);
     } else {
-      // Log unexpected errors
-      logger.error('Unexpected error', err, {
-        url: req.originalUrl,
-        method: req.method,
-        body: req.body,
-        query: req.query,
-        params: req.params,
-        ip: req.ip,
-        userAgent: req.get('User-Agent'),
-        userId: (req as any).user?.uid,
-      });
+      logger.error('Unexpected error', err, safeRequestData(req));
 
-      // Don't leak error details in production
       if (config.app.env === 'production') {
         error = new AppError('Internal server error', 500, undefined, ErrorCode.EXTERNAL_SERVICE_ERROR);
       } else {
@@ -84,13 +81,9 @@ export const errorHandler = (
       }
     }
 
-    // Log error for monitoring
     logError(error, req);
-
-    // Send error response
     sendErrorResponse(error, req, res);
   } catch (processingError) {
-    // If error processing itself fails, send a generic error
     logger.error('Error processing failed', processingError);
     res.status(500).json({
       success: false,
@@ -103,6 +96,9 @@ export const errorHandler = (
   }
 };
 
+/**
+ * Log error for monitoring
+ */
 const logError = async (error: AppError, req: Request): Promise<void> => {
   try {
     const errorLog = {
@@ -111,16 +107,11 @@ const logError = async (error: AppError, req: Request): Promise<void> => {
       message: error.message,
       code: error.code,
       statusCode: error.statusCode,
-      url: req.originalUrl,
-      method: req.method,
-      ip: req.ip,
-      userAgent: req.get('User-Agent'),
-      userId: (req as any).user?.uid,
+      ...safeRequestData(req),
       details: error.details,
       stack: error.stack,
     };
 
-    // Log to different levels based on status code
     switch (errorLog.level) {
       case 'error':
         logger.error('Request error', errorLog);
@@ -132,16 +123,14 @@ const logError = async (error: AppError, req: Request): Promise<void> => {
         logger.info('Request info', errorLog);
     }
 
-    // Store critical errors in cache for monitoring
     if (error.statusCode >= 500) {
       await getCache().set(
         `error:${Date.now()}:${Math.random()}`,
         JSON.stringify(errorLog),
-        { ttl: 60 * 60 * 24 } // 24 hours
+        { ttl: 60 * 60 * 24 }
       );
     }
   } catch (loggingError) {
-    // If logging fails, just log to console to avoid infinite loops
     console.error('Failed to log error:', loggingError);
   }
 };
@@ -152,6 +141,9 @@ const getErrorLevel = (statusCode: number): 'error' | 'warn' | 'info' => {
   return 'info';
 };
 
+/**
+ * Send error response to client
+ */
 const sendErrorResponse = (error: AppError, req: Request, res: Response): void => {
   try {
     const response: any = {
@@ -164,24 +156,16 @@ const sendErrorResponse = (error: AppError, req: Request, res: Response): void =
       },
     };
 
-    // Add details if available
     if (error.details && error.details.length > 0) {
       response.error.details = error.details;
     }
 
-    // Add request ID if available
-    const requestId = (req as any).id;
-    if (requestId) {
-      response.error.requestId = requestId;
-    }
+    const requestId = (req as any).requestId;
+    if (requestId) response.error.requestId = requestId;
 
-    // Add correlation ID for distributed tracing
     const correlationId = req.get('X-Correlation-ID');
-    if (correlationId) {
-      response.error.correlationId = correlationId;
-    }
+    if (correlationId) response.error.correlationId = correlationId;
 
-    // Add debug information in development
     if (config.app.env === 'development' && error.stack) {
       response.error.debug = {
         stack: error.stack,
@@ -191,7 +175,6 @@ const sendErrorResponse = (error: AppError, req: Request, res: Response): void =
 
     res.status(error.statusCode).json(response);
   } catch (responseError) {
-    // If response sending fails, this is critical
     console.error('Failed to send error response:', responseError);
     res.status(500).json({
       success: false,
@@ -204,98 +187,60 @@ const sendErrorResponse = (error: AppError, req: Request, res: Response): void =
   }
 };
 
+/**
+ * 404 Not Found handler
+ */
 export const notFoundHandler = (req: Request, res: Response, next: NextFunction): void => {
-  try {
-    const error = new AppError(
-      `Route ${req.originalUrl} not found`,
-      404,
-      undefined,
-      ErrorCode.NOT_FOUND
-    );
-    next(error);
-  } catch (error) {
-    console.error('Not found handler error:', error);
-    res.status(500).json({
-      success: false,
-      error: {
-        code: 'NOT_FOUND_HANDLER_ERROR',
-        message: 'An error occurred while processing the request',
-        timestamp: new Date().toISOString(),
-      },
-    });
-  }
+  const error = new AppError(
+    `Route ${req.originalUrl} not found`,
+    404,
+    undefined,
+    ErrorCode.NOT_FOUND
+  );
+  next(error);
 };
 
+/**
+ * Async handler wrapper
+ */
 export const asyncHandler = (fn: Function) => (req: Request, res: Response, next: NextFunction) => {
   Promise.resolve(fn(req, res, next)).catch((error) => {
-    try {
-      // Log the error for debugging
-      logger.error('Async handler error', error, {
-        url: req.originalUrl,
-        method: req.method,
-        ip: req.ip,
-        userId: (req as any).user?.uid,
-      });
+    logger.error('Async handler error', error, safeRequestData(req));
 
-      // Convert to AppError if not already
-      if (!(error instanceof AppError)) {
-        error = new AppError(
-          error.message || 'Internal server error',
-          (error.statusCode as number) || (error.status as number) || 500,
-          undefined,
-          (error.code as string) || 'INTERNAL_ERROR'
-        );
-      }
-
-      next(error);
-    } catch (handlerError) {
-      // If error handling fails, send a generic error
-      console.error('Async handler processing failed:', handlerError);
-      next(new AppError('Internal server error', 500, undefined, 'INTERNAL_ERROR'));
+    if (!(error instanceof AppError)) {
+      error = new AppError(
+        error.message || 'Internal server error',
+        (error.statusCode as number) || (error.status as number) || 500,
+        undefined,
+        (error.code as string) || 'INTERNAL_ERROR'
+      );
     }
+
+    next(error);
   });
 };
 
-// Global error handlers for uncaught exceptions
-process.on('uncaughtException', async (error: Error) => {
-  try {
-    logger.error('UNCAUGHT EXCEPTION! 💥 Shutting down...', error);
-    await getCache().disconnect();
-  } catch (cleanupError) {
-    console.error('Cleanup failed during uncaught exception:', cleanupError);
-  }
-  process.exit(1);
-});
+// Global shutdown handlers
+['uncaughtException', 'unhandledRejection'].forEach((event) =>
+  process.on(event as any, async (err: any, promise?: Promise<any>) => {
+    try {
+      logger.error(event === 'unhandledRejection' ? 'UNHANDLED REJECTION! 💥' : 'UNCAUGHT EXCEPTION! 💥', err);
+      await getCache().disconnect();
+    } catch (cleanupError) {
+      console.error('Cleanup failed during shutdown:', cleanupError);
+    }
+    process.exit(1);
+  })
+);
 
-process.on('unhandledRejection', async (reason: any, promise: Promise<any>) => {
-  try {
-    logger.error('UNHANDLED REJECTION! 💥 Shutting down...', {
-      reason,
-      promise: promise.toString(),
-    });
-    await getCache().disconnect();
-  } catch (cleanupError) {
-    console.error('Cleanup failed during unhandled rejection:', cleanupError);
-  }
-  process.exit(1);
-});
-
-process.on('SIGTERM', async () => {
-  try {
-    logger.info('👋 SIGTERM RECEIVED. Shutting down gracefully');
-    await getCache().disconnect();
-  } catch (cleanupError) {
-    console.error('Cleanup failed during SIGTERM:', cleanupError);
-  }
-  process.exit(0);
-});
-
-process.on('SIGINT', async () => {
-  try {
-    logger.info('👋 SIGINT RECEIVED. Shutting down gracefully');
-    await getCache().disconnect();
-  } catch (cleanupError) {
-    console.error('Cleanup failed during SIGINT:', cleanupError);
-  }
-  process.exit(0);
-});
+['SIGTERM', 'SIGINT'].forEach((sig) =>
+  process.on(sig, async () => {
+    try {
+      logger.info(`👋 ${sig} RECEIVED. Shutting down gracefully`);
+      await getCache().disconnect();
+    } catch (cleanupError) {
+      console.error(`Cleanup failed during ${sig}:`, cleanupError);
+    }
+    process.exit(0);
+  })
+);

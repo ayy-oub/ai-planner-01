@@ -2,7 +2,7 @@ import express, { Application } from 'express';
 import helmet from 'helmet';
 import compression from 'compression';
 import morgan from 'morgan';
-import mongoSanitize from 'express-mongo-sanitize';
+//import mongoSanitize from 'express-mongo-sanitize';
 import hpp from 'hpp';
 // @ts-ignore  -- no types for xss-clean
 import xss from 'xss-clean';
@@ -31,14 +31,23 @@ import userRoutes from './modules/user/user.routes';
 import healthRoutes from './modules/health/health.routes';
 import { corsMiddleware } from './shared/middleware/cors.middleware';
 import metricsCollector from './infrastructure/monitoring/metrics';
+import { xssSafeMiddleware } from './shared/middleware/xss-safe.middleware';
+import { initQueues } from './shared/utils/init-queues';
+import { queueService as queueServ } from './shared/container';
 
 
 function createApp(): Application {
 
     const app: Application = express();
 
-    // Trust proxy for accurate IP addresses
-    app.set('trust proxy', true);
+    // Trust proxy for accurate IP addresses behind reverse proxies
+    if (config.app.env === 'production') {
+        // Behind a reverse proxy in production
+        app.set('trust proxy', 1);
+    } else {
+        // Local development
+        app.set('trust proxy', false);
+    }
 
     // Security middleware
     app.use(helmet({
@@ -46,8 +55,8 @@ function createApp(): Application {
         crossOriginEmbedderPolicy: config.app.env === 'production' ? undefined : false,
     }));
 
-    app.use(xss());
-    app.use(mongoSanitize());
+    app.use(xssSafeMiddleware);
+    //app.use(mongoSanitize());
     app.use(hpp());
 
     // CORS configuration
@@ -56,6 +65,10 @@ function createApp(): Application {
     } else {
         app.use(corsMiddleware.cors);
     }
+
+    const queueService = queueServ;
+    // Initialize all queues at startup
+    initQueues(queueService);
 
     // Compression
     app.use(compression());

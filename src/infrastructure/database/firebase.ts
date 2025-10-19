@@ -84,7 +84,7 @@ class FirebaseConnection {
             if (!this.db) return false;
 
             // Perform a simple operation to check connectivity
-            await this.db.collection('__health__').limit(1).get();
+            await this.db.collection('health_check').limit(1).get();
             return true;
         } catch (error) {
             logger.error('Firebase health check failed:', error);

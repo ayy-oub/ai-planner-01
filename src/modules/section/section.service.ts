@@ -21,16 +21,18 @@ import {
 import { AppError } from '../../shared/utils/errors';
 import { logger } from '../../shared/utils/logger';
 
+import { auditService, plannerRepository, activityRepository } from '../../shared/container'; // singletons
+
 export class SectionService {
-    constructor(
-        private sectionRepository: SectionRepository,
-        private plannerRepository: PlannerRepository,
-        private activityRepository: ActivityRepository,
-        private auditService: AuditService
-    ) { }
+    constructor(private readonly sectionRepository: SectionRepository) { }
+
+    /* ---- getters for the singletons we still need ---- */
+    private get plannerRepository(): PlannerRepository { return plannerRepository } // if you cached repos
+    private get activityRepository(): ActivityRepository { return activityRepository }
+    private get auditService(): AuditService { return auditService; }
 
     /* =========================================================
-       CRUD
+        CRUD
     ========================================================= */
 
     async createSection(plannerId: string, userId: string, data: CreateSectionRequest): Promise<SectionResponse> {

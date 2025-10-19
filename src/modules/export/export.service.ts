@@ -1,19 +1,15 @@
-// src/modules/export/export.service.ts
-let uuidv4: () => string;
-
-(async () => {
-    const uuidModule = await import('uuid');
-    uuidv4 = uuidModule.v4;
-})();
-import { ExportRepository } from './export.repository';
-import { UserRepository } from '../user/user.repository';
-import { PlannerRepository } from '../planner/planner.repository';
-import { SectionRepository } from '../section/section.repository';
-import { ActivityRepository } from '../activity/activity.repository';
-import { FileUploadService } from '../../shared/services/file-upload.service';
-import { QueueService } from '../../shared/services/queue.service';
-import { EmailService } from '../../shared/services/email.service';
-import { AuditService } from '../../shared/services/audit.service';
+import {
+    userRepository,
+    plannerRepository,
+    sectionRepository,
+    activityRepository,
+    fileUploadService,
+    queueService,
+    emailService,
+    auditService,
+} from '../../shared/container';
+import { logger } from '../../shared/utils/logger';
+import { AppError, ErrorCode } from '../../shared/utils/errors';
 import {
     ExportRequest,
     ExportResult,
@@ -22,9 +18,22 @@ import {
     ExportQuota,
     ExportFilters,
 } from './export.types';
-import { AppError, ErrorCode } from '../../shared/utils/errors';
-import { logger } from '../../shared/utils/logger';
 import { format } from 'date-fns';
+import { UserRepository } from '../user/user.repository';
+import { AuditService } from '@/shared/services/audit.service';
+import { EmailService } from '@/shared/services/email.service';
+import { FileUploadService } from '@/shared/services/file-upload.service';
+import { QueueService } from '@/shared/services/queue.service';
+import { ActivityRepository } from '../activity/activity.repository';
+import { PlannerRepository } from '../planner/planner.repository';
+import { SectionRepository } from '../section/section.repository';
+import { ExportRepository } from './export.repository';
+
+let uuidv4: () => string;
+(async () => {
+    const uuidModule = await import('uuid');
+    uuidv4 = uuidModule.v4;
+})();
 
 export class ExportService {
     private readonly quotaCfg = {
@@ -33,20 +42,20 @@ export class ExportService {
         enterprise: { monthly: -1, maxBytes: 200 * 1024 * 1024 },
     };
 
-    constructor(
-        private readonly repo: ExportRepository,
-        private readonly userRepo: UserRepository,
-        private readonly plannerRepo: PlannerRepository,
-        private readonly sectionRepo: SectionRepository,
-        private readonly activityRepo: ActivityRepository,
-        private readonly files: FileUploadService,
-        private readonly queue: QueueService,
-        private readonly email: EmailService,
-        private readonly audit: AuditService,
-    ) { }
+    constructor(private readonly repo: ExportRepository) { }
+
+    /* ---- getters for singletons ---- */
+    private get userRepo(): UserRepository { return userRepository; }
+    private get plannerRepo(): PlannerRepository { return plannerRepository; }
+    private get sectionRepo(): SectionRepository { return sectionRepository; }
+    private get activityRepo(): ActivityRepository { return activityRepository; }
+    private get files(): FileUploadService { return fileUploadService; }
+    private get queue(): QueueService { return queueService; }
+    private get email(): EmailService { return emailService; }
+    private get audit(): AuditService { return auditService; }
 
     /* =========================================================
-       CRUD
+        CRUD
     ========================================================= */
 
     async createExport(req: ExportRequest): Promise<ExportResult> {
@@ -75,6 +84,7 @@ export class ExportService {
         await this.queue.addJob('export', 'processExport', { exportId: exportResult.id, userId: req.userId });
 
         this.log(req.userId, 'EXPORT_CREATED', { exportId: exportResult.id, format: req.format });
+        logger.info(`[ExportService] Created export ${exportResult.id} for user ${req.userId}`);
         return exportResult;
     }
 
@@ -94,6 +104,7 @@ export class ExportService {
         if (ex.fileUrl) await this.files.deleteFile(ex.fileUrl);
         await this.repo.delete(exportId);
         this.log(userId, 'EXPORT_DELETED', { exportId });
+        logger.info(`[ExportService] Deleted export ${exportId} for user ${userId}`);
     }
 
     /* =========================================================
@@ -193,6 +204,7 @@ export class ExportService {
             await this.repo.update(exportId, updates);
             await this.sendCompleteEmail(ex.userId, ex);
             this.log(ex.userId, 'EXPORT_COMPLETED', { exportId, format: ex.format });
+            logger.info(`[ExportService] Export ${exportId} completed for user ${ex.userId}`);
         } catch (err: any) {
             await this.repo.update(exportId, {
                 status: 'failed',
@@ -200,12 +212,13 @@ export class ExportService {
                 metadata: { ...ex.metadata, errors: err.message },
             });
             this.log(ex.userId, 'EXPORT_FAILED', { exportId, error: err.message });
+            logger.error(`[ExportService] Export ${exportId} failed: ${err.message}`);
             throw err;
         }
     }
 
     /* =========================================================
-       PRIVATE
+       PRIVATE HELPERS
     ========================================================= */
 
     private async checkQuota(userId: string): Promise<void> {
@@ -227,25 +240,15 @@ export class ExportService {
         } else if (req.sectionIds?.length) {
             out.sections = await this.sectionRepo.findByIds(req.sectionIds);
             out.activities = (
-                await Promise.all(
-                    req.sectionIds.map(id => this.activityRepo.findBySectionId(id))
-                )
+                await Promise.all(req.sectionIds.map(id => this.activityRepo.findBySectionId(id)))
             ).flat();
         } else if (req.activityIds?.length) {
             out.activities = await this.activityRepo.findByIds(req.activityIds);
         } else {
             out.planners = await this.plannerRepo.findByUserId(req.userId, {});
             const pIds = out.planners.map((p: any) => p.id);
-            out.sections = (
-                await Promise.all(
-                    pIds.map((id: any) => this.sectionRepo.findByPlannerId(id))
-                )
-            ).flat();
-            out.activities = (
-                await Promise.all(
-                    pIds.map((id: any) => this.activityRepo.findBySectionId(id))
-                )
-            ).flat();
+            out.sections = (await Promise.all(pIds.map((id: any) => this.sectionRepo.findByPlannerId(id)))).flat();
+            out.activities = (await Promise.all(pIds.map((id: any) => this.activityRepo.findBySectionId(id)))).flat();
         }
 
         if (req.filters) out.activities = this.applyFilters(out.activities, req.filters);
@@ -254,29 +257,27 @@ export class ExportService {
         return out;
     }
 
+    private log(userId: string, action: string, meta?: any): void {
+        this.audit.logActivity({ userId, action, metadata: meta, timestamp: new Date() })
+            .catch((err: any) => logger.warn(`[ExportService] Audit log failed: ${err.message}`));
+    }
+
     private async dispatchGenerator(ex: ExportResult): Promise<Buffer> {
         const req = ex.metadata.originalRequest;
         switch (ex.format) {
-            case 'pdf':
-                return this.generatePdf(await this.gatherData(req), req.options);
-            case 'csv':
-                return this.generateCsv(await this.gatherData(req), req.options);
-            case 'excel':
-                return this.generateExcel(await this.gatherData(req), req.options);
-            case 'json':
-                return Buffer.from(JSON.stringify(await this.gatherData(req), null, 2));
-            case 'ical':
-                return this.generateICal(await this.gatherData(req), req.options);
-            case 'markdown':
-                return this.generateMarkdown(await this.gatherData(req), req.options);
-            case 'html':
-                return this.generateHtml(await this.gatherData(req), req.options);
-            case 'txt':
-                return this.generateText(await this.gatherData(req), req.options);
-            default:
-                throw new AppError('Unsupported format', 400);
+            case 'pdf': return this.generatePdf(await this.gatherData(req), req.options);
+            case 'csv': return this.generateCsv(await this.gatherData(req), req.options);
+            case 'excel': return this.generateExcel(await this.gatherData(req), req.options);
+            case 'json': return Buffer.from(JSON.stringify(await this.gatherData(req), null, 2));
+            case 'ical': return this.generateICal(await this.gatherData(req), req.options);
+            case 'markdown': return this.generateMarkdown(await this.gatherData(req), req.options);
+            case 'html': return this.generateHtml(await this.gatherData(req), req.options);
+            case 'txt': return this.generateText(await this.gatherData(req), req.options);
+            default: throw new AppError('Unsupported format', 400);
         }
     }
+
+
 
     /* ------------------------------------------------------------------ */
     /*  Generators (stubbed – replace with real impl)                     */
@@ -400,7 +401,4 @@ export class ExportService {
         });
     }
 
-    private log(userId: string, action: string, meta?: any): void {
-        this.audit.logActivity({ userId, action, metadata: meta, timestamp: new Date() }).catch(() => { });
-    }
 }

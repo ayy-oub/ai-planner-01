@@ -28,6 +28,7 @@ let uuidv4: () => string;
 import { subDays, addMinutes } from 'date-fns';
 import * as os from 'os';
 import * as process from 'process';
+import { cacheService, firebaseService } from '../../shared/container'; // singletons
 
 export class HealthService implements OnModuleDestroy {
 
@@ -45,12 +46,13 @@ export class HealthService implements OnModuleDestroy {
 
     constructor(
         private readonly healthRepository: HealthRepository,
-        private readonly cacheService: CacheService,
-        private readonly firebaseService: FirebaseService,
     ) {
         this.initializeHealthChecks();
         this.startHealthMonitoring();
     }
+
+    private get cacheService(): CacheService { return cacheService; }
+    private get firebaseService(): FirebaseService { return firebaseService; }
 
     /* ------------------------------------------------------------------ */
     /*  Public API  –  exactly what the controller calls                    */

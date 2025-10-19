@@ -1,53 +1,46 @@
 // src/modules/auth/auth.service.ts
+/* --------------  imports: bring in the singleton objects -------------- */
 import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
 let uuidv4: () => string;
+(async () => { const uuidModule = await import('uuid'); uuidv4 = uuidModule.v4; })();
 
-(async () => {
-  const uuidModule = await import('uuid');
-  uuidv4 = uuidModule.v4;
-})();
 import { config } from '../../shared/config';
 import { AuthRepository } from './auth.repository';
 import { CacheService } from '../../shared/services/cache.service';
-import { EmailService } from '../../shared/services/email.service';
 import { AuditService } from '../../shared/services/audit.service';
-import { QueueService } from '../../shared/services/queue.service';
+import { QueueName, QueueService } from '../../shared/services/queue.service';
+import { EmailService } from '../../shared/services/email.service';   // only for TYPE
 import {
-  AuthResponse,
-  LoginRequest,
-  RegisterRequest,
-  RefreshTokenRequest,
-  ForgotPasswordRequest,
-  ResetPasswordRequest,
-  ChangePasswordRequest,
-  AuthTokens,
-  SecurityLog,
-  UpdateProfileRequest
+  AuthResponse, LoginRequest, RegisterRequest, RefreshTokenRequest,
+  ForgotPasswordRequest, ResetPasswordRequest, ChangePasswordRequest,
+  AuthTokens, SecurityLog, UpdateProfileRequest
 } from './auth.types';
 import {
-  UserProfile,
-  SubscriptionStatus,
-  User,
-  UserSubscriptionPlan,
+  UserProfile, SubscriptionStatus, User, UserSubscriptionPlan,
 } from '../user/user.types';
 import {
-  BadRequestError,
-  UnauthorizedError,
-  ForbiddenError,
-  NotFoundError,
+  BadRequestError, UnauthorizedError, ForbiddenError, NotFoundError,
 } from '../../shared/utils/errors';
 import { logger } from '../../shared/utils/logger';
 
-export class AuthService {
-  constructor(
-    private authRepository: AuthRepository,
-    private cacheService: CacheService,
-    private emailService: EmailService,
-    private auditService: AuditService,
-    private queueService: QueueService
-  ) { }
+/* --------------  singleton objects (created in container.ts) ---------- */
+import {
+  cacheService,
+  emailService,
+  auditService,
+  queueService,
+} from '../../shared/container';
 
+export class AuthService {
+  /* --------------  constructor: only the repository is unique --------- */
+  constructor(private authRepository: AuthRepository) { }
+
+  /* --------------  getters so the rest of the code keeps compiling --- */
+  private get cacheService(): CacheService { return cacheService; }
+  private get emailService(): EmailService { return emailService; }
+  private get auditService(): AuditService { return auditService; }
+  private get queueService(): QueueService { return queueService; }
   /* ------------------------------------------------------------------ */
   /*  Public Auth Methods                                               */
   /* ------------------------------------------------------------------ */
@@ -148,7 +141,7 @@ export class AuthService {
       });
 
       await this.queueService.addJob(
-        'emails', // queue name
+        QueueName.EMAIL, // queue name
         'sendWelcomeEmail', // job type
         {
           email: user.email,
@@ -520,7 +513,7 @@ export class AuthService {
       config.security.jwtSecret,
       { expiresIn: config.security.jwtRefreshExpire }
     );
-    return { accessToken, refreshToken, expiresIn: config.security.jwtAccessExpire, tokenType: 'access'};
+    return { accessToken, refreshToken, expiresIn: config.security.jwtAccessExpire, tokenType: 'access' };
   }
 
   private async handleFailedLogin(user: User): Promise<void> {
@@ -542,9 +535,9 @@ export class AuthService {
         failedLoginAttempts: 0,
         lockedUntil: undefined,
       };
-    
+
       updateData.security.lockedUntil = new Date(Date.now() + config.security.lockoutDuration);
-    
+
       await this.emailService.sendAccountLockedEmail(
         user.email,
         user.displayName ?? 'User'

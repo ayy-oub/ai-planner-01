@@ -10,6 +10,7 @@ import {
     ExportTemplate,
     ExportStats,
 } from './export.types';
+import { cacheService } from '@/shared/container';
 
 const firestore = firebaseConnection.getDatabase();
 
@@ -17,7 +18,9 @@ export class ExportRepository {
     private readonly exportColl = firestore.collection('exports');
     private readonly templateColl = firestore.collection('exportTemplates');
 
-    constructor(private readonly cacheService: CacheService) {}
+    constructor() { }
+    get cacheService(): CacheService { return cacheService; }
+
 
     /* ------------------------------------------------------------------ */
     /*  Core CRUD                                                         */

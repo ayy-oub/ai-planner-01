@@ -19,17 +19,19 @@ import {
     ExportRecord,
     SessionRecord,
 } from './user.types';
+/* --------------  singletons from container -------------- */
+import { cacheService, emailService, firebaseService } from '../../shared/container';
 
 export class UserService {
-    constructor(
-        private readonly userRepo: UserRepository,
-        private readonly cache: CacheService,
-        private readonly email: EmailService,
-        private readonly firebase: FirebaseService
-    ) { }
+    constructor(private readonly userRepo: UserRepository) { }
+
+    /* --------------  getters -------------- */
+    private get cache(): CacheService { return cacheService; }
+    private get email(): EmailService { return emailService; }
+    private get firebase(): FirebaseService { return firebaseService; }
 
     /* =========================================================
-       👤 Profile Management
+        👤 Profile Management
     ========================================================= */
 
     async getProfile(userId: string): Promise<UserProfile> {

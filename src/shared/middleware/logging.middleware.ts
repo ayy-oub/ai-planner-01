@@ -3,8 +3,8 @@ import { logger } from '../utils/logger';
 let uuidv4: () => string;
 
 (async () => {
-  const uuidModule = await import('uuid');
-  uuidv4 = uuidModule.v4;
+    const uuidModule = await import('uuid');
+    uuidv4 = uuidModule.v4;
 })();
 
 /**
@@ -27,8 +27,8 @@ export const requestLogger = (req: Request, res: Response, next: NextFunction) =
         userAgent: req.get('user-agent'),
         contentType: req.get('content-type'),
         contentLength: req.get('content-length'),
-        query: req.query,
-        params: req.params,
+        query: { ...req.query }, // ✅ shallow copy
+        params: { ...req.params }, // optional copy
         // Don't log sensitive data
         body: maskSensitiveData(req.body),
     });
@@ -58,8 +58,11 @@ export const requestLogger = (req: Request, res: Response, next: NextFunction) =
         if (res.statusCode >= 400) {
             logger.warn('Request completed with error', {
                 ...logData,
-                responseBody: responseBody ? JSON.parse(responseBody) : undefined,
+                responseBody: responseBody && typeof responseBody === 'string'
+                    ? JSON.parse(responseBody)
+                    : responseBody,
             });
+
         } else {
             logger.info('Request completed', logData);
         }

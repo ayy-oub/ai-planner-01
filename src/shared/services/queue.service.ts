@@ -326,6 +326,7 @@ export enum QueueName {
 
 export enum QueueJobType {
   SEND_EMAIL = 'send-email',
+  SEND_WELCOME_EMAIL = 'send-welcome-email',
   SEND_BULK_EMAIL = 'send-bulk-email',
   SEND_TEMPLATE_EMAIL = 'send-template-email',
   SEND_PUSH_NOTIFICATION = 'send-push-notification',
